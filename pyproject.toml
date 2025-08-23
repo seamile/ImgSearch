@@ -1,0 +1,33 @@
+[project]
+name = "ifinder"
+version = "0.1.0"
+description = "Image finder for searching images by image."
+readme = "README.md"
+authors = [
+    { name = "Seamile", email = "lanhuermao@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "hnswlib>=0.8.0",
+    "pillow>=11.3.0",
+    "transformers>=4.55.4",
+    # PyTorch dependencies with platform-specific versions
+    "torch==2.2.2; platform_machine=='x86_64' and sys_platform=='darwin'",
+    "torch>=2.8.0; platform_machine!='x86_64' or sys_platform!='darwin'",
+    # NumPy with version constraints
+    "numpy<2; platform_machine=='x86_64' and sys_platform=='darwin'",
+    "numpy>=1.24.0; platform_machine!='x86_64' or sys_platform!='darwin'",
+    "torchvision>=0.17.2",
+]
+
+[project.scripts]
+ifinder = "ifinder:main"
+
+[build-system]
+requires = ["uv_build>=0.8.6,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ipython>=9.4.0",
+]
