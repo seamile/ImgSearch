@@ -3,24 +3,24 @@ from pickle import dump, load  # noqa: S403
 
 from hnswlib import Index
 
+from ifinder.utils import Feature
+
 DB_DIR = Path.home() / '.ifinder'
 IDX_NAME = 'index.bin'
 MAP_NAME = 'mapping.db'
 CAPACITY = 10000
 
-Feature = list[float]
 
-
-class ImgBase:
-    """Image feature index"""
+class VectorDatabase:
+    """Vector database for storing and searching item features"""
 
     def __init__(self, db_dir: Path = DB_DIR) -> None:
         self.base_dir = db_dir
         try:
             self.index, self.mapping = self.load_db(self.base_dir)
         except Exception:
-            self.index = Index(space='l2', dim=512)
-            self.index.init_index(max_elements=CAPACITY, ef_construction=200, M=16)
+            self.index = Index(space='cosine', dim=512)
+            self.index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_delete=True)
             self.mapping = {}
 
     @property
@@ -70,7 +70,7 @@ class ImgBase:
 
         # load index file
         index = Index(space='cosine', dim=512)
-        index.load_index(idx_path.as_posix())
+        index.load_index(idx_path.as_posix(), allow_replace_delete=True)
 
         # load mapping file
         with map_path.open('rb') as fp:

@@ -1,8 +1,17 @@
+import logging
+
 import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
+from ifinder.utils import Feature
+
 DEFAULT_MODEL = 'wkcn/TinyCLIP-ViT-61M-32-Text-29M-LAION400M'
+
+# Disable transformers warnings
+for name, logger in logging.Logger.manager.loggerDict.items():
+    if name.startswith('transformers.') and isinstance(logger, logging.Logger):
+        logger.setLevel(logging.ERROR)
 
 
 class Clip:
@@ -13,8 +22,9 @@ class Clip:
         self.model, self.processor = self.load_model(model_name)
         # Move model to device and ensure proper dtype
         self.model = self.model.to(self.device)  # type: ignore
+
+        # For MPS, ensure model is in float32
         if self.device.type == 'mps':
-            # For MPS, ensure model is in float32
             self.model = self.model.float()
 
     @staticmethod
@@ -33,10 +43,10 @@ class Clip:
     def load_model(model_name: str = DEFAULT_MODEL) -> tuple[CLIPModel, CLIPProcessor]:
         """Load CLIP model and processor"""
         model = CLIPModel.from_pretrained(model_name)
-        processor = CLIPProcessor.from_pretrained(model_name, use_fast=True)
+        processor = CLIPProcessor.from_pretrained(model_name)
         return model, processor
 
-    def embed_images(self, images: list[Image.Image]) -> list[list[float]]:
+    def embed_images(self, images: list[Image.Image]) -> list[Feature]:
         """Embed a list of images to feature vectors"""
         if not images:
             return []
@@ -53,11 +63,11 @@ class Clip:
 
         return image_features.cpu().numpy().tolist()
 
-    def embed_image(self, image: Image.Image) -> list[float]:
+    def embed_image(self, image: Image.Image) -> Feature:
         """Embed a single image to a feature vector"""
         return self.embed_images([image])[0]
 
-    def embed_text(self, text: str) -> list[float]:
+    def embed_text(self, text: str) -> Feature:
         """Embed a single text string to a feature vector"""
         # Process text
         inputs = self.processor(text=[text], return_tensors='pt', padding=True, truncation=True)

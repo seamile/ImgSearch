@@ -9,6 +9,8 @@ END = '\x1b[0m'
 TRIM = '\x1b[K'
 EXTENSIONS = Image.registered_extensions().keys()
 
+Feature = list[float]
+
 
 def print_err(msg):
     """Output error message to stderr"""
