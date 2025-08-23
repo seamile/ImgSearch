@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 from .clip import Clip
-from .storage import DEFAULT_INDEX, ImgBase
+from .storage import DB_DIR, VectorDatabase
 from .utils import find_all_images, is_image, print_err
 
 
@@ -24,7 +24,7 @@ def main() -> None:  # noqa: C901
 
     # Optional arguments
     parser.add_argument(
-        '-d', '--database', type=Path, default=DEFAULT_INDEX, help=f'Database file path (default: {DEFAULT_INDEX})'
+        '-d', '--database', type=Path, default=DB_DIR, help=f'Database directory path (default: {DB_DIR})'
     )
     parser.add_argument('-n', '--num', type=int, default=10, help='Number of search results (default: 10)')
     parser.add_argument('-m', '--model', type=str, help='CLIP model name')
@@ -32,7 +32,7 @@ def main() -> None:  # noqa: C901
     args = parser.parse_args()
 
     # Create instances
-    imgbase = ImgBase(db_path=args.database)
+    imgbase = VectorDatabase(db_dir=args.database)
     clip = Clip(model_name=args.model) if args.model else Clip()
 
     try:
@@ -71,8 +71,9 @@ def main() -> None:  # noqa: C901
                     # Extract features
                     features = clip.embed_images(batch_images)
 
-                    # Add to index
-                    imgbase.add_images(valid_paths, features)
+                    # Add to index (convert paths to strings)
+                    labels = [str(path) for path in valid_paths]
+                    imgbase.add_items(labels, features)
                     added_count += len(valid_paths)
 
                     print(f'Processed {min(i + batch_size, len(image_paths))}/{len(image_paths)} images')
@@ -117,7 +118,7 @@ def main() -> None:  # noqa: C901
                 print(f'\nFound {len(results)} similar results:')
                 print('-' * 60)
                 for i, (path, similarity) in enumerate(results, 1):
-                    print(f'{i:2d}. {path} (similarity: {similarity:.3f})')
+                    print(f'{i:2d}. {path} (similarity: {similarity}%)')
             else:
                 print('No similar images found')
 

@@ -20,7 +20,7 @@ class VectorDatabase:
             self.index, self.mapping = self.load_db(self.base_dir)
         except Exception:
             self.index = Index(space='cosine', dim=512)
-            self.index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_delete=True)
+            self.index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_deleted=True)  # type: ignore
             self.mapping = {}
 
     @property
@@ -70,7 +70,7 @@ class VectorDatabase:
 
         # load index file
         index = Index(space='cosine', dim=512)
-        index.load_index(idx_path.as_posix(), allow_replace_delete=True)
+        index.load_index(idx_path.as_posix(), allow_replace_deleted=True)  # type: ignore
 
         # load mapping file
         with map_path.open('rb') as fp:
