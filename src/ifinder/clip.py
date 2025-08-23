@@ -11,9 +11,14 @@ class Clip:
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None) -> None:
         self.device = self.get_device(device)
         self.model, self.processor = self.load_model(model_name)
+        # Move model to device and ensure proper dtype
+        self.model = self.model.to(self.device)  # type: ignore
+        if self.device.type == 'mps':
+            # For MPS, ensure model is in float32
+            self.model = self.model.float()
 
     @staticmethod
-    def get_device(name: str | None = None):
+    def get_device(name: str | None = None) -> torch.device:
         """Get device type"""
         if name is not None:
             return torch.device(name)
@@ -31,5 +36,37 @@ class Clip:
         processor = CLIPProcessor.from_pretrained(model_name, use_fast=True)
         return model, processor
 
-    def embed_images(self, images: list[Image.Image]):
-        """Embed images to feature vectors"""
+    def embed_images(self, images: list[Image.Image]) -> list[list[float]]:
+        """Embed a list of images to feature vectors"""
+        if not images:
+            return []
+
+        # Process images
+        inputs = self.processor(images=images, return_tensors='pt', padding=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        # Get image features
+        with torch.no_grad():
+            image_features = self.model.get_image_features(**inputs)
+            # Normalize features
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+        return image_features.cpu().numpy().tolist()
+
+    def embed_image(self, image: Image.Image) -> list[float]:
+        """Embed a single image to a feature vector"""
+        return self.embed_images([image])[0]
+
+    def embed_text(self, text: str) -> list[float]:
+        """Embed a single text string to a feature vector"""
+        # Process text
+        inputs = self.processor(text=[text], return_tensors='pt', padding=True, truncation=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        # Get text features
+        with torch.no_grad():
+            text_features = self.model.get_text_features(**inputs)
+            # Normalize features
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+        return text_features.cpu().numpy().tolist()[0]

@@ -11,19 +11,19 @@ EXTENSIONS = Image.registered_extensions().keys()
 
 
 def print_err(msg):
-    """output error message"""
+    """Output error message to stderr"""
     print(f'{RED}{msg}{END}{TRIM}', file=sys.stderr)
 
 
 def is_image(path: Path, ignore_hidden=True) -> bool:
-    """check if path is an image"""
+    """Check if the given path is an image file"""
     if ignore_hidden and path.name[0] == '.':
         return False
     return path.is_file() and path.suffix.lower() in EXTENSIONS
 
 
 def find_all_images(paths: str | Path | Sequence[str | Path], recursively=True, ignore_hidden=True):
-    """find all images in the given paths"""
+    """Find all image files in the given paths"""
 
     if isinstance(paths, (str, Path)):
         paths = [paths]
