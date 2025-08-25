@@ -3,7 +3,7 @@
 iFinder command line entry point
 """
 
-from .cmd import main
+from .client import main
 
 if __name__ == '__main__':
     main()
