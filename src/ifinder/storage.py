@@ -11,7 +11,7 @@ MAP_NAME = 'mapping.db'
 CAPACITY = 10000
 
 
-class VectorDatabase:
+class VectorDB:
     """Vector database for storing and searching item features"""
 
     def __init__(self, db_dir: Path = DB_DIR) -> None:
@@ -19,8 +19,7 @@ class VectorDatabase:
         try:
             self.index, self.mapping = self.load_db(self.base_dir)
         except Exception:
-            self.index = Index(space='cosine', dim=512)
-            self.index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_deleted=True)  # type: ignore
+            self.index = self.new_index()
             self.mapping = {}
 
     @property
@@ -40,22 +39,12 @@ class VectorDatabase:
         """Get next max elements for resizing index"""
         return self.index.max_elements + CAPACITY
 
-    def save(self, base_dir: Path | None = None):
-        """Save database to file"""
-        if base_dir is None:
-            base_dir = self.base_dir
-
-        # Ensure parent directory exists
-        base_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save index
-        idx_path = base_dir / IDX_NAME
-        self.index.save_index(idx_path.as_posix())
-
-        # Save mapping
-        map_path = base_dir / MAP_NAME
-        with map_path.open('wb') as f:
-            dump(self.mapping, f)
+    @staticmethod
+    def new_index(init=True) -> Index:
+        index = Index(space='cosine', dim=512)
+        if init is True:
+            index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_deleted=True)  # type: ignore
+        return index
 
     @classmethod
     def load_db(cls, base_dir: Path | str) -> tuple[Index, dict[int, str]]:
@@ -69,7 +58,7 @@ class VectorDatabase:
             raise FileNotFoundError(f'Database file not found: {idx_path}, {map_path}')
 
         # load index file
-        index = Index(space='cosine', dim=512)
+        index = cls.new_index(init=False)
         index.load_index(idx_path.as_posix(), allow_replace_deleted=True)  # type: ignore
 
         # load mapping file
@@ -81,7 +70,7 @@ class VectorDatabase:
     def add_item(self, label: str, feature: Feature):
         """Add one item to index"""
         # Check if we need to resize the index
-        if self.next_id >= self.capacity:
+        if self.size >= self.capacity:
             self.index.resize_index(self.next_capacity)
 
         # Add the feature vector to the index
@@ -107,20 +96,43 @@ class VectorDatabase:
         # Add features to index
         self.index.add_items(features, ids, replace_deleted=True)
 
+    def save(self, base_dir: Path | None = None):
+        """Save database to file"""
+        if base_dir is None:
+            base_dir = self.base_dir
+
+        # Ensure parent directory exists
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save index
+        idx_path = base_dir / IDX_NAME
+        self.index.save_index(idx_path.as_posix())
+
+        # Save mapping
+        map_path = base_dir / MAP_NAME
+        with map_path.open('wb') as f:
+            dump(self.mapping, f)
+
+    def clear(self):
+        """Clear database"""
+        self.index = self.new_index()
+        self.mapping.clear()
+        self.save()
+
     def search(self, feature: Feature, k: int = 10) -> list[tuple[str, float]]:
         """Search items by feature vector"""
-        if self.index is None or self.next_id == 0:
+        if self.index is None or self.size == 0:
             return []
 
         # Search for similar items
-        labels, distances = self.index.knn_query([feature], k=min(k, self.next_id))
+        v_ids, distances = self.index.knn_query([feature], k=min(k, self.size))
 
         # Convert results to (path, similarity) tuples
         results = []
-        for label, distance in zip(labels[0], distances[0], strict=False):
-            if label in self.mapping:
+        for vid, distance in zip(v_ids[0], distances[0], strict=True):
+            if vid in self.mapping:
                 # Convert distance to similarity
                 similarity = round((1.0 - distance) * 100)
-                results.append((self.mapping[label], similarity))
+                results.append((self.mapping[vid], similarity))
 
         return results
