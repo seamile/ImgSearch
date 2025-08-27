@@ -1,17 +1,13 @@
 import sys
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser
 from pathlib import Path
-from typing import Any
 
 import Pyro5.api
 import Pyro5.errors
+from PIL import Image
 
-from .storage import DB_DIR
-from .utils import print_err
-
-# The name for the service and the socket file.
-SERVICE_NAME = 'ifinder.service'
-SOCKET_NAME = 'ifinder.sock'
+from ifinder.consts import BASE_DIR, DB_NAME, SERVICE_NAME, UNIX_SOCKET
+from ifinder.utils import find_all_images, img2bytes, is_image, print_err, print_warn
 
 
 class Client:
@@ -22,134 +18,91 @@ class Client:
     supporting image search, database management, and service control operations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, base_dir: Path = BASE_DIR, db_name: str = DB_NAME) -> None:
         """Initialize the iFinder client."""
-        self.service: Any  # The Pyro5 proxy to the iFinder service
-        self.args: Namespace
+        self.base_dir = base_dir
+        self.db_name = db_name
 
-    def create_parser(self) -> ArgumentParser:
-        """Create command line argument parser."""
-        parser = ArgumentParser(prog='ifinder', description='iFinder - A local image search engine.')
-
-        # Main commands
-        group = parser.add_mutually_exclusive_group()
-        group.add_argument('query', nargs='?', help='Search query (image path or keyword)')
-        group.add_argument(
-            '-a', dest='add', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)'
-        )
-        group.add_argument('-i', dest='info', action='store_true', help='Show database information')
-        group.add_argument('-C', dest='clear', action='store_true', help='Clear the entire database')
-        group.add_argument('-c', dest='compare', nargs=2, metavar='IMG_PATH', help='Compare similarity of two images')
-
-        # Service management commands
-        srv_cmds = ['start', 'stop', 'restart', 'status']
-        group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the iFinder service')
-
-        # Optional arguments
-        parser.add_argument(
-            '-d', dest='database', type=Path, default=DB_DIR, help=f'Database directory path (default: {DB_DIR})'
-        )
-        parser.add_argument('-n', dest='num', type=int, default=10, help='Number of search results (default: 10)')
-        parser.add_argument('-m', dest='model', type=str, help='CLIP model name for the service to use')
-        parser.add_argument(
-            '-l',
-            dest='label',
-            choices=['path', 'name'],
-            default='path',
-            help='Label naming method: "path" for absolute path, "name" for filename without extension (default: path)',
-        )
-        parser.add_argument(
-            '-D',
-            dest='daemon',
-            action='store_true',
-            help='Run the service in the background (used with -s start/restart)',
-        )
-
-        return parser
-
-    def run(self):
-        """Run the client with command line arguments."""
-        parser = self.create_parser()
-        self.args = parser.parse_args()
-
-        # Delegate service management commands
-        if self.args.service:
-            self._handle_service_command()
-            return
-
-        # Connect to service for other operations
-        self.service = self._connect_to_service()
-
-        # Handle different operations
-        if self.args.add:
-            self._handle_add()
-        elif self.args.info:
-            self._handle_info()
-        elif self.args.clear:
-            self._handle_clear()
-        elif self.args.compare:
-            self._handle_compare()
-        elif self.args.query:
-            self._handle_search()
-        else:
-            parser.print_help()
-
-    def _handle_service_command(self):
-        """Handle service management commands."""
-        # This import is intentionally local to avoid loading heavy modules for regular commands.
-        from .server import ServerDaemon
-
-        daemon = ServerDaemon()
-        if self.args.service == 'start':
-            daemon.start(daemonize=self.args.daemon)
-        elif self.args.service == 'stop':
-            daemon.stop()
-        elif self.args.service == 'restart':
-            daemon.restart(daemonize=self.args.daemon)
-        elif self.args.service == 'status':
-            daemon.status()
-
-    def _connect_to_service(self) -> Pyro5.api.Proxy:
+    def connect_to_service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
-        uds_socket = DB_DIR / SOCKET_NAME
-        if not uds_socket.exists():
-            print_err(f"Service not running or socket file missing at '{uds_socket}'.")
+        if not UNIX_SOCKET.exists():
+            print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
             print_err('You can start the service with: ifinder -s start')
             sys.exit(1)
 
         try:
-            uri = f'PYRO:{SERVICE_NAME}@./u:{uds_socket}'
+            # Configure Pyro5 to use msgpack serializer
+            Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
+
+            uri = f'PYRO:{SERVICE_NAME}@./u:{UNIX_SOCKET}'
             service = Pyro5.api.Proxy(uri)
             service._pyroBind()  # A quick check to see if the server is responsive
             return service
         except Pyro5.errors.CommunicationError:
-            print_err(f"Failed to connect to service socket at '{uds_socket}'.")
+            print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
             print_err('Is the iFinder service running? Check with: ifinder -s status')
             sys.exit(1)
         except Exception as e:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
             sys.exit(1)
 
-    def _handle_add(self):
-        """Handle adding images to the index."""
-        print('Sending request to add images...')
-        # Convert paths to absolute paths
-        abs_paths = [str(Path(p).resolve()) for p in self.args.add]
-        added_count: int = self.service.add_images(abs_paths, label_type=self.args.label)  # type: ignore
-        if added_count > 0:
-            print(f'Service successfully added {added_count} images to the index.')
-        else:
-            print('Service reported that no new images were added.')
+    def handle_service_command(self, service_cmd: str) -> None:
+        """Handle service management commands."""
+        from .server import Server
 
-    def _handle_search(self):
+        server = Server()
+        match service_cmd:
+            case 'start':
+                server.run()
+            case 'stop':
+                server.stop()
+            case 'status':
+                Server.status()
+
+    def add_images(self, paths: list[str], label: str = 'path') -> None:
+        """Handle adding images to the index."""
+        print('Loading and sending images...')
+
+        images_dict = {}
+        for img_path in find_all_images(paths):
+            try:
+                label_name = img_path.stem if label == 'name' else str(img_path.resolve())
+                img = Image.open(img_path)
+                images_dict[label_name] = img2bytes(img)
+            except Exception as e:
+                print_err(f'Failed to load {img_path}: {e}')
+
+        if not images_dict:
+            print('No images found')
+            return
+
+        service = self.connect_to_service()
+        queued_count: int = service.handle_add_images(images_dict)  # type: ignore
+        print(f'Queued {queued_count} images for processing')
+
+    def search(self, query: str, num: int = 10) -> None:
         """Handle search operations."""
         print('Searching...')
-        query = self.args.query
-        # If query is a file path, convert to absolute path
-        if Path(query).exists():
-            query = str(Path(query).resolve())
-        results: list = self.service.search(query, k=self.args.num)  # type: ignore
-        if results:
+
+        service = self.connect_to_service()
+        query_path = Path(query)
+        if query_path.is_file() and is_image(query_path):
+            # Image search
+            try:
+                img = Image.open(query_path)
+                img_bytes = img2bytes(img)
+                results: list | None = service.handle_search(img_bytes, k=num)
+            except Exception as e:
+                print_err(f'Failed to load image: {e}')
+                return
+        else:
+            # Text search
+            results = service.handle_search(str(query), k=num)
+
+        if results is None:
+            print('Search queue is full, please try again later.')
+            return
+        elif results:
             print(f'\nFound {len(results)} similar results:')
             print('-' * 60)
             for i, (path, similarity) in enumerate(results, 1):
@@ -157,39 +110,97 @@ class Client:
         else:
             print('No similar images found.')
 
-    def _handle_info(self):
+    def get_db_info(self) -> None:
         """Handle database info request."""
-        info: dict = self.service.get_db_info()  # type: ignore
+        service = self.connect_to_service()
+        info: dict = service.handle_get_db_info()  # type: ignore
         print('Database Information:')
         for key, value in info.items():
-            print(f'  - {key.replace("_", " ").title()}: {value}')
+            print(f'  - {key.replace("_", "").title()}: {value}')
 
-    def _handle_clear(self):
+    def clear_db(self) -> None:
         """Handle database clear request."""
-        if __name__ != '__main__':
-            return self.service.clear_db()
-        elif input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':
-            if self.service.clear_db():
-                print('Database has been cleared.')
+        service = self.connect_to_service()
+        if input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':
+            if service.handle_clear_db():
+                print_warn('Database has been cleared.')
             else:
                 print_err('Failed to clear the database.')
         else:
-            print('Operation cancelled.')
+            print_warn('Operation cancelled.')
 
-    def _handle_compare(self):
+    def compare_images(self, path1: str, path2: str) -> None:
         """Handle image comparison request."""
-        path1, path2 = self.args.compare
-        # Convert to absolute paths
+        service = self.connect_to_service()
         abs_path1 = str(Path(path1).resolve())
         abs_path2 = str(Path(path2).resolve())
-        similarity = self.service.compare_images(abs_path1, abs_path2)
+        similarity = service.handle_compare_images(abs_path1, abs_path2)
         print(f'Similarity between images: {similarity}%')
+
+
+def create_parser() -> ArgumentParser:
+    """Create command line argument parser."""
+    parser = ArgumentParser(prog='ifinder', description='iFinder - A local image search engine.')
+
+    # Main commands
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('query', nargs='?', help='Search query (image path or keyword)')
+    group.add_argument('-a', dest='add', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
+    group.add_argument('-i', dest='info', action='store_true', help='Show database information')
+    group.add_argument('-C', dest='clear', action='store_true', help='Clear the entire database')
+    group.add_argument('-c', dest='compare', nargs=2, metavar='IMG_PATH', help='Compare similarity of two images')
+
+    # Service management commands
+    srv_cmds = ['start', 'stop', 'status']
+    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the iFinder service')
+
+    # Optional arguments
+    parser.add_argument(
+        '--base',
+        dest='base_dir',
+        type=Path,
+        default=BASE_DIR,
+        help=f'Database base directory path (default: {BASE_DIR})',
+    )
+    parser.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help=f'Database name (default: {DB_NAME})')
+    parser.add_argument('-n', dest='num', type=int, default=10, help='Number of search results (default: 10)')
+    parser.add_argument('-m', dest='model', type=str, help='CLIP model name for the service to use')
+    parser.add_argument(
+        '-l',
+        dest='label',
+        choices=['path', 'name'],
+        default='path',
+        help='Label naming method: "path" for absolute path, "name" for filename without extension (default: path)',
+    )
+
+    return parser
 
 
 def main() -> None:
     """Main function for command line interface"""
-    client = Client()
-    client.run()
+    parser = create_parser()
+    args = parser.parse_args()
+
+    client = Client(base_dir=args.base_dir, db_name=args.db_name)
+
+    # Handle service management commands
+    if args.service:
+        client.handle_service_command(args.service)
+        return
+
+    # Handle other operations
+    if args.add:
+        client.add_images(args.add, args.label)
+    elif args.info:
+        client.get_db_info()
+    elif args.clear:
+        client.clear_db()
+    elif args.compare:
+        client.compare_images(args.compare[0], args.compare[1])
+    elif args.query:
+        client.search(args.query, args.num)
+    else:
+        parser.print_help()
 
 
 if __name__ == '__main__':

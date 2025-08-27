@@ -1,5 +1,7 @@
 import logging
+import os
 
+import numpy as np
 import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -17,6 +19,7 @@ class Clip:
     """CLIP model wrapper"""
 
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None) -> None:
+        torch.set_num_threads(os.cpu_count() or 1)
         self.device = self.get_device(device)
         self.model, self.processor = self.load_model(model_name)
         # Move model to device and ensure proper dtype
@@ -79,3 +82,14 @@ class Clip:
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
         return text_features.cpu().numpy().tolist()[0]
+
+    def compare_images(self, img1: Image.Image, img2: Image.Image) -> float:
+        """Compare similarity between two images"""
+        if img1.mode != 'RGB':
+            img1 = img1.convert('RGB')
+        if img2.mode != 'RGB':
+            img2 = img2.convert('RGB')
+
+        feature1, feature2 = self.embed_images([img1, img2])
+        similarity = np.dot(feature1, feature2)
+        return round(float(similarity) * 100, 2)

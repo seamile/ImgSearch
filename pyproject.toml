@@ -20,6 +20,7 @@ dependencies = [
     "torchvision>=0.17.2",
     "pyro5>=5.15",
     "bidict>=0.23.1",
+    "msgpack>=1.1.1",
 ]
 
 [project.scripts]
