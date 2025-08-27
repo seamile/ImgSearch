@@ -1,26 +1,23 @@
 from pathlib import Path
-from pickle import dump, load  # noqa: S403
+from pickle import HIGHEST_PROTOCOL, dump, load  # noqa: S403
 
+from bidict import bidict
 from hnswlib import Index
 
+from ifinder.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
 from ifinder.utils import Feature
 
-DB_DIR = Path.home() / '.ifinder'
-IDX_NAME = 'index.bin'
-MAP_NAME = 'mapping.db'
-CAPACITY = 10000
+Mapping = bidict[int, str]
 
 
 class VectorDB:
     """Vector database for storing and searching item features"""
 
-    def __init__(self, db_dir: Path = DB_DIR) -> None:
-        self.base_dir = db_dir
-        try:
-            self.index, self.mapping = self.load_db(self.base_dir)
-        except Exception:
-            self.index = self.new_index()
-            self.mapping = {}
+    def __init__(self, db_name: str = DB_NAME, base_dir: Path = BASE_DIR) -> None:
+        self.db_path = (base_dir / db_name).resolve()
+        self.idx_path = self.db_path / IDX_NAME
+        self.map_path = self.db_path / MAP_NAME
+        self.index, self.mapping = self.load_db(self.db_path)
 
     @property
     def size(self) -> int:
@@ -39,6 +36,14 @@ class VectorDB:
         """Get next max elements for resizing index"""
         return self.index.max_elements + CAPACITY
 
+    def has_id(self, id: int) -> bool:  # noqa: A002
+        """Check if id exists in index"""
+        return id in self.index.get_ids_list()
+
+    def has_label(self, label: str) -> bool:
+        """Check if label exists in index"""
+        return label in self.mapping.inv
+
     @staticmethod
     def new_index(init=True) -> Index:
         index = Index(space='cosine', dim=512)
@@ -47,23 +52,33 @@ class VectorDB:
         return index
 
     @classmethod
-    def load_db(cls, base_dir: Path | str) -> tuple[Index, dict[int, str]]:
-        """Load database from file"""
-        if isinstance(base_dir, str):
-            base_dir = Path(base_dir)
+    def load_db(cls, db_path: Path | str) -> tuple[Index, Mapping]:
+        """Load database from file, or create a new one if not exist"""
+        if isinstance(db_path, str):
+            db_path = Path(db_path)
+        db_path.mkdir(parents=True, exist_ok=True)
 
-        idx_path = base_dir / IDX_NAME
-        map_path = base_dir / MAP_NAME
-        if not idx_path.is_file() or not map_path.is_file():
-            raise FileNotFoundError(f'Database file not found: {idx_path}, {map_path}')
+        idx_path = db_path / IDX_NAME
+        map_path = db_path / MAP_NAME
+        if not idx_path.exists() and not map_path.exists():
+            index = cls.new_index(init=True)
+            mapping: Mapping = bidict()
+        elif idx_path.is_file() and map_path.is_file():
+            # load index file
+            index = cls.new_index(init=False)
+            index.load_index(idx_path.as_posix(), allow_replace_deleted=True)  # type: ignore
 
-        # load index file
-        index = cls.new_index(init=False)
-        index.load_index(idx_path.as_posix(), allow_replace_deleted=True)  # type: ignore
+            # load mapping file
+            with map_path.open('rb') as fp:
+                mapping = load(fp)  # noqa: S301
+            if not isinstance(mapping, bidict):
+                mapping = bidict(mapping)
 
-        # load mapping file
-        with map_path.open('rb') as fp:
-            mapping = load(fp)  # noqa: S301
+            # check if the index and mapping files are consistent
+            if index.element_count != len(mapping):
+                raise ValueError('Index and mapping files are not consistent')
+        else:
+            raise OSError('DB file may be corrupted')
 
         return index, mapping
 
@@ -96,22 +111,14 @@ class VectorDB:
         # Add features to index
         self.index.add_items(features, ids, replace_deleted=True)
 
-    def save(self, base_dir: Path | None = None):
+    def save(self):
         """Save database to file"""
-        if base_dir is None:
-            base_dir = self.base_dir
-
-        # Ensure parent directory exists
-        base_dir.mkdir(parents=True, exist_ok=True)
-
         # Save index
-        idx_path = base_dir / IDX_NAME
-        self.index.save_index(idx_path.as_posix())
+        self.index.save_index(self.idx_path.as_posix())
 
         # Save mapping
-        map_path = base_dir / MAP_NAME
-        with map_path.open('wb') as f:
-            dump(self.mapping, f)
+        with self.map_path.open('wb') as f:
+            dump(self.mapping, f, protocol=HIGHEST_PROTOCOL)
 
     def clear(self):
         """Clear database"""

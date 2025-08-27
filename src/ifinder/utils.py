@@ -1,5 +1,6 @@
 import sys
 from collections.abc import Sequence
+from itertools import islice
 from pathlib import Path
 
 from PIL import Image
@@ -45,3 +46,10 @@ def find_all_images(paths: str | Path | Sequence[str | Path], recursively=True, 
 
         else:
             print_err(f'{path} is not a file or directory')
+
+
+def ibatch(iterable, batch_size):
+    """Batch iterator"""
+    it = iter(iterable)
+    while batch := list(islice(it, batch_size)):
+        yield batch

@@ -4,9 +4,8 @@ import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
+from ifinder.consts import DEFAULT_MODEL
 from ifinder.utils import Feature
-
-DEFAULT_MODEL = 'wkcn/TinyCLIP-ViT-61M-32-Text-29M-LAION400M'
 
 # Disable transformers warnings
 for name, logger in logging.Logger.manager.loggerDict.items():
