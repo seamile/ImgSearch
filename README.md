@@ -1,6 +1,6 @@
 # Pixa
 
-Pixa 是一款图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。您可以直接在命令行中使用，也可以把它融入到其他系统中作为一个图片搜索模块。
+Pixa 是一款轻量级的图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。他的资源占用很低，可以部署在性能有限的机器上。您可以直接在命令行中使用，也可将它融入到其他系统中作为一个图片搜索模块使用。
 
 本项目使用 TinyCLIP 模型提取图片特征，数据存储和搜索使用 HNSWlib。程序整体采用 C-S 架构，使用前需要先启动服务，然后通过客户端进行操作。
 
@@ -8,67 +8,71 @@ Pixa 是一款图片搜索引擎，可以用来以图搜图，也可以通过文
 
 ### 1. 服务管理
 
+#### 启动服务
+
 ```shell
-# 前台启动（用于调试）
-pixa -s start
+px -s start
+```
 
-# 后台启动（守护进程模式）
-pixa -s start -D
+#### 停止服务
 
-# 停止服务
-pixa -s stop
+```shell
+px -s stop
+```
 
-# 重启服务
-pixa -s restart
+#### 查看状态
 
-# 查看服务状态
-pixa -s status
+```shell
+px -s status
 ```
 
 ### 2. 添加图片到图像索引
 
+将指定路径的图片添加到数据库中。当指定的目标是文件夹时，会添加其中的所有图片。
+
 ```shell
-pixa -a /path/to/images
+px -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
 ```
 
 ### 3. 搜索图片
 
-- 以图搜图:
+通过样本图片或描述信息搜索图片。可通过 `-n` 参数指定搜索结果数量，搜索结果会按相似度从高到低排序。
 
-    ```shell
-    pixa /path/to/query_image.jpg
-    ```
+#### 以图搜图
 
-- 以关键词搜图:
+```shell
+px /path/to/query_image.jpg
+```
 
-    ```shell
-    pixa "red flower"
-    ```
+#### 以关键词搜图
+
+```shell
+px -n 3 "red flower"
+```
 
 ### 4. 其他功能
 
-- 查看数据库信息:
+#### 查看数据库信息
 
-    ```shell
-    pixa -i
-    ```
+```shell
+px -i
+```
 
-- 比较两张图片的相似度:
+#### 比较两张图片的相似度
 
-    ```shell
-    pixa -c image1.jpg image2.jpg
-    ```
+```shell
+px -c ./foo/img1.png ./bar/img2.jpg
+```
 
-- 清空数据库:
+#### 清空数据库
 
-    ```shell
-    pixa -C
-    ```
+```shell
+px -C
+```
 
-### 5. 其他可选参数
+### 5. 可选参数列表
 
 - `-d DB_DIR`   指定数据库目录路径（默认: ~/.pixa）
-- `-D`          后台运行服务（配合 -s start/restart 使用）
 - `-l {path,name}` 标签命名方式：path=绝对路径，name=文件名
 - `-m MODEL`    CLIP 模型名称
 - `-n NUM`      搜索结果数量（默认: 10）
@@ -76,33 +80,25 @@ pixa -a /path/to/images
 ### 6. 作为模块导入
 
 ```python
-from pixa.clip import Clip
-from pixa.storage import VectorDB
-from pathlib import Path
-from PIL import Image
+from pixa.client import Client
 
-# 创建实例
-clip = Clip()
-db = VectorDB(db_dir=Path("~/.pixa").expanduser())
+# 创建客户端
+cli = Client()
 
 # 添加图片到索引
 image_paths = ["/path/to/image1.jpg", "/path/to/image2.jpg"]
-images = [Image.open(path).convert('RGB') for path in image_paths]
-features = clip.embed_images(images)
-labels = [str(Path(path).resolve()) for path in image_paths]  # 使用绝对路径作为标签
-db.add_items(labels, features)
-db.save()
+n_added = cli.add_images(image_paths)
+print(f'添加了 {n_added} 张图片')
 
 # 以图搜图
-query_img = Image.open("/path/to/query.jpg").convert('RGB')
-query_feature = clip.embed_image(query_img)
-results = db.search(query_feature, k=10)
-for path, similarity in results:
+for path, similarity in cli.search("/path/to/query.jpg"):
     print(f"{path} (相似度: {similarity}%)")
 
-# 文本搜索
-text_feature = clip.embed_text("red flower")
-text_results = db.search(text_feature, k=10)
-for path, similarity in text_results:
+# 以关键词搜图
+for path, similarity in cli.search("red flower"):
     print(f"{path} (相似度: {similarity}%)")
+
+# 对比相似度
+similarity = cli.compare("/path/to/image1.jpg", "/path/to/image2.jpg")
+print(f'相似度: {similarity}%')
 ```

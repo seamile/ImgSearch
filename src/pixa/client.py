@@ -1,6 +1,9 @@
+import os
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 
 import Pyro5.api
 import Pyro5.errors
@@ -8,6 +11,8 @@ from PIL import Image
 
 from pixa.consts import BASE_DIR, DB_NAME, SERVICE_NAME, UNIX_SOCKET
 from pixa.utils import find_all_images, img2bytes, is_image, print_err, print_warn
+
+Image.MAX_IMAGE_PIXELS = 100_000_000
 
 
 class Client:
@@ -27,7 +32,7 @@ class Client:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not UNIX_SOCKET.exists():
             print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-            print_err('You can start the service with: pixa -s start')
+            print_err('You can start the service with: px -s start')
             sys.exit(1)
 
         try:
@@ -40,7 +45,7 @@ class Client:
             return service
         except Pyro5.errors.CommunicationError:
             print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-            print_err('Is the pixa service running? Check with: pixa -s status')
+            print_err('Is the pixa service running? Check with: px -s status')
             sys.exit(1)
         except Exception as e:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
@@ -59,83 +64,91 @@ class Client:
             case 'status':
                 Server.status()
 
-    def add_images(self, paths: list[str], label: str = 'path') -> None:
-        """Handle adding images to the index."""
-        print('Loading and sending images...')
+    @staticmethod
+    def _preprocess_image(input_q: Queue, output_q: Queue, label_type: str) -> None:
+        """Static method to preprocess images from queue."""
+        try:
+            while not input_q.empty():
+                img_path = input_q.get(block=False)
+                img_label = img_path.stem if label_type == 'name' else str(img_path.resolve())
+                img = Image.open(img_path)
+                img_bytes = img2bytes(img, 480)
+                output_q.put((img_label, img_bytes))
+                input_q.task_done()
+        except Empty:
+            return
+        except Exception as e:
+            print_err(f'Failed to preprocess image: {e}')
+
+    def add_images(self, paths: list[str], label_type: str = 'path') -> int:
+        """Handle adding images to the index using queue-based thread pool."""
+        # Create queues
+        input_q: Queue[Path] = Queue()
+        output_q: Queue[tuple[str, bytes]] = Queue()
+
+        # Find all images and add their paths to input queue
+        for img_path in find_all_images(paths):
+            input_q.put(img_path)
+
+        # Create fixed number of worker threads
+        threads = []
+        max_workers = max(os.cpu_count() or 4, 4)
+        for _ in range(max_workers):
+            t = Thread(target=self._preprocess_image, args=(input_q, output_q, label_type))
+            t.start()
+            threads.append(t)
+
+        # Wait for all threads to complete
+        for t in threads:
+            t.join()
 
         images_dict = {}
-        for img_path in find_all_images(paths):
-            try:
-                label_name = img_path.stem if label == 'name' else str(img_path.resolve())
-                img = Image.open(img_path)
-                images_dict[label_name] = img2bytes(img)
-            except Exception as e:
-                print_err(f'Failed to load {img_path}: {e}')
+        while not output_q.empty():
+            img_label, img_bytes = output_q.get()
+            images_dict[img_label] = img_bytes
 
         if not images_dict:
-            print('No images found')
-            return
+            return 0
 
+        print(f'Sending {len(images_dict)} images to the server...')
         service = self.connect_to_service()
         queued_count: int = service.handle_add_images(images_dict)  # type: ignore
-        print(f'Queued {queued_count} images for processing')
+        return queued_count
 
-    def search(self, query: str, num: int = 10) -> None:
+    def search(self, query: str, num: int = 10):
         """Handle search operations."""
-        print('Searching...')
-
-        service = self.connect_to_service()
         query_path = Path(query)
-        if query_path.is_file() and is_image(query_path):
-            # Image search
-            try:
+        service = self.connect_to_service()
+        try:
+            if query_path.is_file() and is_image(query_path):
+                # Image search
                 img = Image.open(query_path)
-                img_bytes = img2bytes(img)
+                img_bytes = img2bytes(img, 480)
                 results: list | None = service.handle_search(img_bytes, k=num)
-            except Exception as e:
-                print_err(f'Failed to load image: {e}')
-                return
-        else:
-            # Text search
-            results = service.handle_search(str(query), k=num)
+            else:
+                # Text search
+                results = service.handle_search(str(query), k=num)
+            return results
+        except Exception as e:
+            print_err(f'Failed to load image: {e}')
+            return None
 
-        if results is None:
-            print('Search queue is full, please try again later.')
-            return
-        elif results:
-            print(f'\nFound {len(results)} similar results:')
-            print('-' * 60)
-            for i, (path, similarity) in enumerate(results, 1):
-                print(f'{i:2d}. {path} (similarity: {similarity}%)')
-        else:
-            print('No similar images found.')
-
-    def get_db_info(self) -> None:
+    def get_db_info(self) -> dict:
         """Handle database info request."""
         service = self.connect_to_service()
-        info: dict = service.handle_get_db_info()  # type: ignore
-        print('Database Information:')
-        for key, value in info.items():
-            print(f'  - {key.replace("_", "").title()}: {value}')
+        return service.handle_get_db_info()  # type: ignore
 
-    def clear_db(self) -> None:
+    def clear_db(self) -> bool:
         """Handle database clear request."""
         service = self.connect_to_service()
-        if input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':
-            if service.handle_clear_db():
-                print_warn('Database has been cleared.')
-            else:
-                print_err('Failed to clear the database.')
-        else:
-            print_warn('Operation cancelled.')
+        return service.handle_clear_db()  # type: ignore
 
-    def compare_images(self, path1: str, path2: str) -> None:
+    def compare_images(self, path1: str, path2: str) -> float:
         """Handle image comparison request."""
-        service = self.connect_to_service()
         abs_path1 = str(Path(path1).resolve())
         abs_path2 = str(Path(path2).resolve())
-        similarity = service.handle_compare_images(abs_path1, abs_path2)
-        print(f'Similarity between images: {similarity}%')
+        service = self.connect_to_service()
+        return service.handle_compare_images(abs_path1, abs_path2)  # type: ignore
 
 
 def create_parser() -> ArgumentParser:
@@ -176,29 +189,53 @@ def create_parser() -> ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     """Main function for command line interface"""
     parser = create_parser()
     args = parser.parse_args()
 
     client = Client(base_dir=args.base_dir, db_name=args.db_name)
 
-    # Handle service management commands
+    # Handle primary commands
     if args.service:
         client.handle_service_command(args.service)
-        return
 
-    # Handle other operations
-    if args.add:
-        client.add_images(args.add, args.label)
-    elif args.info:
-        client.get_db_info()
-    elif args.clear:
-        client.clear_db()
-    elif args.compare:
-        client.compare_images(args.compare[0], args.compare[1])
+    elif args.add:
+        n_added = client.add_images(args.add, args.label)
+        print(f'Added {n_added} images for processing')
+
     elif args.query:
-        client.search(args.query, args.num)
+        print('Searching...')
+        results = client.search(args.query, args.num)
+        if results:
+            print(f'\nFound {len(results)} similar results:')
+            print('-' * 60)
+            for i, (path, similarity) in enumerate(results, 1):
+                print(f'{i:2d}. {path} (similarity: {similarity}%)')
+        elif results is None:
+            print('Search queue is full, please try again later.')
+        else:
+            print('No similar images found.')
+
+    elif args.info:
+        if info := client.get_db_info():
+            print('Database Information:')
+            for key, value in info.items():
+                print(f'  - {key.replace("_", "").title()}: {value}')
+
+    elif args.clear:
+        if input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':
+            if client.clear_db():
+                print_warn('Database has been cleared.')
+            else:
+                print_err('Failed to clear the database.')
+        else:
+            print_warn('Operation cancelled.')
+
+    elif args.compare:
+        similarity = client.compare_images(args.compare[0], args.compare[1])
+        print(f'Similarity between images: {similarity}%')
+
     else:
         parser.print_help()
 

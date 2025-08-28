@@ -66,7 +66,7 @@ class VectorDB:
         elif idx_path.is_file() and map_path.is_file():
             # load index file
             index = cls.new_index(init=False)
-            index.load_index(idx_path.as_posix(), allow_replace_deleted=True)  # type: ignore
+            index.load_index(str(idx_path), allow_replace_deleted=True)  # type: ignore
 
             # load mapping file
             with map_path.open('rb') as fp:
@@ -114,7 +114,7 @@ class VectorDB:
     def save(self):
         """Save database to file"""
         # Save index
-        self.index.save_index(self.idx_path.as_posix())
+        self.index.save_index(str(self.idx_path))
 
         # Save mapping
         with self.map_path.open('wb') as f:

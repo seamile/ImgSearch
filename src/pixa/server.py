@@ -12,6 +12,7 @@ from pixa.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NA
 from pixa.storage import VectorDB
 from pixa.utils import bytes2img, get_logger, print_err
 
+Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 logger = get_logger('PixaService')
@@ -85,6 +86,7 @@ class RPCService:
 
                 # Process batch when full
                 if len(batch_images) >= BATCH_SIZE:
+                    logger.info(f'Processing batch of {len(batch_images)} images')
                     self._process_images_async(batch_images, batch_labels)
                     batch_images.clear()
                     batch_labels.clear()
@@ -92,6 +94,7 @@ class RPCService:
             except Exception:
                 # Process remaining images in batch
                 if batch_images:
+                    logger.info(f'Processing batch of {len(batch_images)} images')
                     self._process_images_async(batch_images, batch_labels)
                     batch_images.clear()
                     batch_labels.clear()
@@ -109,14 +112,13 @@ class RPCService:
         logger.info(f'[AddImages] {len(images)} images received')
 
         queued_count = 0
-        for label, image_bytes in images.items():
-            try:
+        try:
+            for label, image_bytes in images.items():
                 image = bytes2img(image_bytes)
                 self.image_queue.put((label, image))
                 queued_count += 1
-            except Exception:
-                logger.warning(f'Queue full, dropping image: {label}')
-                break
+        except Exception as e:
+            logger.warning(f'Queue full, dropping image: {e}')
 
         logger.info(f'Queued {queued_count} images for processing')
         return queued_count
@@ -186,7 +188,7 @@ class RPCService:
             Dictionary containing database statistics (base_dir, size, capacity)
         """
         return {
-            'base_dir': self.db.db_path.parent.as_posix(),
+            'base_dir': str(self.db.db_path.parent.resolve()),
             'Database': self.db.db_path.name,
             'size': self.db.size,
             'capacity': self.db.capacity,
@@ -294,8 +296,9 @@ class Server:
             signal.signal(signal.SIGINT, self.handle_signal)
 
             # Initialize service
-            self.daemon = Pyro5.server.Daemon(unixsocket=str(UNIX_SOCKET))
+            logger.info('Loading clip models and database...')
             self.service = RPCService()
+            self.daemon = Pyro5.server.Daemon(unixsocket=str(UNIX_SOCKET))
             self.daemon.register(self.service, objectId=SERVICE_NAME)
 
             # log service info
