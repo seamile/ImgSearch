@@ -6,8 +6,8 @@ import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
-from ifinder.consts import DEFAULT_MODEL
-from ifinder.utils import Feature
+from pixa.consts import DEFAULT_MODEL
+from pixa.utils import Feature
 
 # Disable transformers warnings
 for name, logger in logging.Logger.manager.loggerDict.items():

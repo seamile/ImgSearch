@@ -4,8 +4,8 @@ from pickle import HIGHEST_PROTOCOL, dump, load  # noqa: S403
 from bidict import bidict
 from hnswlib import Index
 
-from ifinder.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
-from ifinder.utils import Feature
+from pixa.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
+from pixa.utils import Feature
 
 Mapping = bidict[int, str]
 

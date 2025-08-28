@@ -6,20 +6,20 @@ import Pyro5.api
 import Pyro5.errors
 from PIL import Image
 
-from ifinder.consts import BASE_DIR, DB_NAME, SERVICE_NAME, UNIX_SOCKET
-from ifinder.utils import find_all_images, img2bytes, is_image, print_err, print_warn
+from pixa.consts import BASE_DIR, DB_NAME, SERVICE_NAME, UNIX_SOCKET
+from pixa.utils import find_all_images, img2bytes, is_image, print_err, print_warn
 
 
 class Client:
     """
-    iFinder client for interacting with the iFinder service.
+    Pixa client for interacting with the pixa service.
 
-    This client provides a command-line interface to the iFinder service,
+    This client provides a command-line interface to the pixa service,
     supporting image search, database management, and service control operations.
     """
 
     def __init__(self, base_dir: Path = BASE_DIR, db_name: str = DB_NAME) -> None:
-        """Initialize the iFinder client."""
+        """Initialize the pixa client."""
         self.base_dir = base_dir
         self.db_name = db_name
 
@@ -27,7 +27,7 @@ class Client:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not UNIX_SOCKET.exists():
             print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-            print_err('You can start the service with: ifinder -s start')
+            print_err('You can start the service with: pixa -s start')
             sys.exit(1)
 
         try:
@@ -40,7 +40,7 @@ class Client:
             return service
         except Pyro5.errors.CommunicationError:
             print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-            print_err('Is the iFinder service running? Check with: ifinder -s status')
+            print_err('Is the pixa service running? Check with: pixa -s status')
             sys.exit(1)
         except Exception as e:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
@@ -140,7 +140,7 @@ class Client:
 
 def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
-    parser = ArgumentParser(prog='ifinder', description='iFinder - A local image search engine.')
+    parser = ArgumentParser(prog='pixa', description='Pixa - A local image search engine.')
 
     # Main commands
     group = parser.add_mutually_exclusive_group()
@@ -152,7 +152,7 @@ def create_parser() -> ArgumentParser:
 
     # Service management commands
     srv_cmds = ['start', 'stop', 'status']
-    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the iFinder service')
+    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the pixa service')
 
     # Optional arguments
     parser.add_argument(

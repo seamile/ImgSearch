@@ -8,13 +8,13 @@ from typing import Any
 import Pyro5.server
 from PIL import Image
 
-from ifinder.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from ifinder.storage import VectorDB
-from ifinder.utils import bytes2img, get_logger, print_err
+from pixa.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
+from pixa.storage import VectorDB
+from pixa.utils import bytes2img, get_logger, print_err
 
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-logger = get_logger('iFinderService')
+logger = get_logger('PixaService')
 
 
 @Pyro5.server.expose
@@ -36,7 +36,7 @@ class RPCService:
             base_dir: Path to the database base directory
             model_name: Name of the CLIP model to use
         """
-        from ifinder.clip import Clip  # import when needed
+        from pixa.clip import Clip  # import when needed
 
         self.clip = Clip(model_name)
         self.db = VectorDB(db_name, base_dir)
@@ -234,7 +234,7 @@ class Server:
         self._shutdown_requested = False
         self._restart_requested = False
         self.service = None
-        self.pid_file = BASE_DIR / 'ifinder.pid'
+        self.pid_file = BASE_DIR / 'pixa.pid'
 
     def _write_pid_file(self):
         """Write current process ID to pid file."""
@@ -283,7 +283,7 @@ class Server:
             UNIX_SOCKET.unlink()
 
         try:
-            logger.info('Starting iFinder Service...')
+            logger.info('Starting Pixa Service...')
 
             # Create pid file
             self._write_pid_file()
@@ -304,7 +304,7 @@ class Server:
             logger.info(f'PID: {os.getpid()}')
             logger.info(f'DB path: {self.service.db.db_path}')
             logger.info(f'DB size: {self.service.db.size}')
-            logger.info('iFinder Service started')
+            logger.info('Pixa service started')
 
             self.daemon.requestLoop()
 
@@ -333,7 +333,7 @@ class Server:
         """Stop the running server."""
         pid = self._read_pid_file()
         if not pid:
-            print_err('iFinder Service is not running')
+            print_err('Pixa service is not running')
             return False
 
         if not self.is_running(pid):
@@ -370,15 +370,15 @@ class Server:
     @classmethod
     def status(cls):
         """Check server status."""
-        pid_file = BASE_DIR / 'ifinder.pid'
+        pid_file = BASE_DIR / 'pixa.pid'
         if not pid_file.exists():
-            print_err('iFinder Service is not running')
+            print_err('Pixa service is not running')
             return False
 
         try:
             pid = int(pid_file.read_text().strip())
             if cls.is_running(pid):
-                print(f'iFinder Service is running (PID: {pid})')
+                print(f'Pixa service is running (PID: {pid})')
                 return True
             else:
                 print_err('PID file exists but process is not running')

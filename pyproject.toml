@@ -1,5 +1,5 @@
 [project]
-name = "ifinder"
+name = "pixa"
 version = "0.1.0"
 description = "Image finder for searching images by image."
 readme = "README.md"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ifinder = "ifinder.client:main"
+pixa = "pixa.client:main"
 
 [build-system]
 requires = ["uv_build>=0.8.6,<0.9.0"]

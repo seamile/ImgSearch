@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-iFinder command line entry point
+Pixa command line entry point
 """
 
 from .client import main

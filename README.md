@@ -1,6 +1,6 @@
-# iFinder
+# Pixa
 
-iFinder 是一款图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。您可以直接在命令行中使用，也可以把它融入到其他系统中作为一个图片搜索模块。
+Pixa 是一款图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。您可以直接在命令行中使用，也可以把它融入到其他系统中作为一个图片搜索模块。
 
 本项目使用 TinyCLIP 模型提取图片特征，数据存储和搜索使用 HNSWlib。程序整体采用 C-S 架构，使用前需要先启动服务，然后通过客户端进行操作。
 
@@ -10,25 +10,25 @@ iFinder 是一款图片搜索引擎，可以用来以图搜图，也可以通过
 
 ```shell
 # 前台启动（用于调试）
-ifinder -s start
+pixa -s start
 
 # 后台启动（守护进程模式）
-ifinder -s start -D
+pixa -s start -D
 
 # 停止服务
-ifinder -s stop
+pixa -s stop
 
 # 重启服务
-ifinder -s restart
+pixa -s restart
 
 # 查看服务状态
-ifinder -s status
+pixa -s status
 ```
 
 ### 2. 添加图片到图像索引
 
 ```shell
-ifinder -a /path/to/images
+pixa -a /path/to/images
 ```
 
 ### 3. 搜索图片
@@ -36,13 +36,13 @@ ifinder -a /path/to/images
 - 以图搜图:
 
     ```shell
-    ifinder /path/to/query_image.jpg
+    pixa /path/to/query_image.jpg
     ```
 
 - 以关键词搜图:
 
     ```shell
-    ifinder "red flower"
+    pixa "red flower"
     ```
 
 ### 4. 其他功能
@@ -50,24 +50,24 @@ ifinder -a /path/to/images
 - 查看数据库信息:
 
     ```shell
-    ifinder -i
+    pixa -i
     ```
 
 - 比较两张图片的相似度:
 
     ```shell
-    ifinder -c image1.jpg image2.jpg
+    pixa -c image1.jpg image2.jpg
     ```
 
 - 清空数据库:
 
     ```shell
-    ifinder -C
+    pixa -C
     ```
 
 ### 5. 其他可选参数
 
-- `-d DB_DIR`   指定数据库目录路径（默认: ~/.ifinder）
+- `-d DB_DIR`   指定数据库目录路径（默认: ~/.pixa）
 - `-D`          后台运行服务（配合 -s start/restart 使用）
 - `-l {path,name}` 标签命名方式：path=绝对路径，name=文件名
 - `-m MODEL`    CLIP 模型名称
@@ -76,14 +76,14 @@ ifinder -a /path/to/images
 ### 6. 作为模块导入
 
 ```python
-from ifinder.clip import Clip
-from ifinder.storage import VectorDB
+from pixa.clip import Clip
+from pixa.storage import VectorDB
 from pathlib import Path
 from PIL import Image
 
 # 创建实例
 clip = Clip()
-db = VectorDB(db_dir=Path("~/.ifinder").expanduser())
+db = VectorDB(db_dir=Path("~/.pixa").expanduser())
 
 # 添加图片到索引
 image_paths = ["/path/to/image1.jpg", "/path/to/image2.jpg"]
