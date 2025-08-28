@@ -9,7 +9,7 @@ import Pyro5.api
 import Pyro5.errors
 from PIL import Image
 
-from pixa.consts import BASE_DIR, DB_NAME, SERVICE_NAME, UNIX_SOCKET
+from pixa.consts import BASE_DIR, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
 from pixa.utils import find_all_images, img2bytes, is_image, print_err, print_warn
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -23,9 +23,8 @@ class Client:
     supporting image search, database management, and service control operations.
     """
 
-    def __init__(self, base_dir: Path = BASE_DIR, db_name: str = DB_NAME) -> None:
+    def __init__(self, db_name: str = DB_NAME) -> None:
         """Initialize the pixa client."""
-        self.base_dir = base_dir
         self.db_name = db_name
 
     def connect_to_service(self) -> Pyro5.api.Proxy:
@@ -51,11 +50,13 @@ class Client:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
             sys.exit(1)
 
-    def handle_service_command(self, service_cmd: str) -> None:
+    def handle_service_command(
+        self, service_cmd: str, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL
+    ) -> None:
         """Handle service management commands."""
         from .server import Server
 
-        server = Server()
+        server = Server(base_dir=base_dir, model_name=model_name)
         match service_cmd:
             case 'start':
                 server.run()
@@ -112,7 +113,7 @@ class Client:
 
         print(f'Sending {len(images_dict)} images to the server...')
         service = self.connect_to_service()
-        queued_count: int = service.handle_add_images(images_dict)  # type: ignore
+        queued_count: int = service.handle_add_images(images_dict, self.db_name)  # type: ignore
         return queued_count
 
     def search(self, query: str, num: int = 10):
@@ -124,10 +125,10 @@ class Client:
                 # Image search
                 img = Image.open(query_path)
                 img_bytes = img2bytes(img, 480)
-                results: list | None = service.handle_search(img_bytes, k=num)
+                results: list | None = service.handle_search(img_bytes, k=num, db_name=self.db_name)
             else:
                 # Text search
-                results = service.handle_search(str(query), k=num)
+                results = service.handle_search(str(query), k=num, db_name=self.db_name)
             return results
         except Exception as e:
             print_err(f'Failed to load image: {e}')
@@ -136,12 +137,12 @@ class Client:
     def get_db_info(self) -> dict:
         """Handle database info request."""
         service = self.connect_to_service()
-        return service.handle_get_db_info()  # type: ignore
+        return service.handle_get_db_info(self.db_name)  # type: ignore
 
     def clear_db(self) -> bool:
         """Handle database clear request."""
         service = self.connect_to_service()
-        return service.handle_clear_db()  # type: ignore
+        return service.handle_clear_db(self.db_name)  # type: ignore
 
     def compare_images(self, path1: str, path2: str) -> float:
         """Handle image comparison request."""
@@ -194,11 +195,11 @@ def main() -> None:  # noqa: C901
     parser = create_parser()
     args = parser.parse_args()
 
-    client = Client(base_dir=args.base_dir, db_name=args.db_name)
+    client = Client(db_name=args.db_name)
 
     # Handle primary commands
     if args.service:
-        client.handle_service_command(args.service)
+        client.handle_service_command(args.service, base_dir=args.base_dir, model_name=args.model or DEFAULT_MODEL)
 
     elif args.add:
         n_added = client.add_images(args.add, args.label)
@@ -221,7 +222,7 @@ def main() -> None:  # noqa: C901
         if info := client.get_db_info():
             print('Database Information:')
             for key, value in info.items():
-                print(f'  - {key.replace("_", "").title()}: {value}')
+                print(f'  - {key.title().replace("_", "")}: {value}')
 
     elif args.clear:
         if input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':

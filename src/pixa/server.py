@@ -1,8 +1,9 @@
 import os
 import signal
 import threading
+from collections import defaultdict
 from pathlib import Path
-from queue import Queue
+from queue import Full, Queue
 from typing import Any
 
 import Pyro5.server
@@ -28,23 +29,23 @@ class RPCService:
     All methods are thread-safe using a simple lock.
     """
 
-    def __init__(self, db_name: str = DB_NAME, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL):
+    def __init__(self, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL):
         """
         Initialize the RPC service with async processing.
 
         Args:
-            db_name: Name of the database
             base_dir: Path to the database base directory
             model_name: Name of the CLIP model to use
         """
         from pixa.clip import Clip  # import when needed
 
         self.clip = Clip(model_name)
-        self.db = VectorDB(db_name, base_dir)
+        self.base_dir = base_dir
+        self.databases: dict[str, VectorDB] = {}
         self._lock = threading.Lock()
 
-        # Async processing queue
-        self.image_queue: Queue[tuple[str, Image.Image]] = Queue(maxsize=BATCH_SIZE * 5)
+        # Async processing queue - now includes db_name
+        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=BATCH_SIZE * 5)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
@@ -52,84 +53,87 @@ class RPCService:
         self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
 
-    def _process_images_async(self, images: list[Image.Image], labels: list[str]):
+    def get_db(self, db_name: str = DB_NAME):
+        """Get database instance"""
+        if db_name not in self.databases:
+            self.databases[db_name] = VectorDB(db_name, self.base_dir)
+        return self.databases[db_name]
+
+    def _process_images_async(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
+        logger.info(f'Processing batch of {len(images)} images for db: {db_name}')
         try:
             features = self.clip.embed_images(images)
 
             with self._lock:
-                self.db.add_items(labels, features)
-                self.db.save()
+                db = self.get_db(db_name)
+                db.add_items(labels, features)
+                db.save()
 
-            logger.info(f'Processed {len(images)} images')
+            logger.info(f'Processed {len(images)} images for db "{db_name}"')
 
         except Exception as e:
-            logger.error(f'Failed to process batch: {e}')
+            logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
 
-    def _process_queue(self):
+    def _process_queue(self) -> None:
         """Background thread to process images from queue."""
-        batch_images = []
-        batch_labels = []
+        # Group images by database name
+        batches: dict[str, tuple[list[Image.Image], list[str]]] = defaultdict(lambda: ([], []))
 
         while True:
             try:
                 # Get image from queue
-                label, image = self.image_queue.get(timeout=1)
+                label, image, db_name = self.image_queue.get(timeout=1)
 
-                # Check for duplicates
-                if self.db.has_label(label):
-                    logger.debug(f'Skipping duplicate label: {label}')
-                    continue
-
+                batch_images, batch_labels = batches[db_name]
                 batch_images.append(image)
                 batch_labels.append(label)
 
                 # Process batch when full
                 if len(batch_images) >= BATCH_SIZE:
-                    logger.info(f'Processing batch of {len(batch_images)} images')
-                    self._process_images_async(batch_images, batch_labels)
-                    batch_images.clear()
-                    batch_labels.clear()
+                    self._process_images_async(batch_images, batch_labels, db_name)
+                    batches[db_name] = ([], [])
 
             except Exception:
-                # Process remaining images in batch
-                if batch_images:
-                    logger.info(f'Processing batch of {len(batch_images)} images')
-                    self._process_images_async(batch_images, batch_labels)
-                    batch_images.clear()
-                    batch_labels.clear()
+                # Process remaining images in all batches
+                for db_name, (batch_images, batch_labels) in batches.items():
+                    if batch_images:
+                        self._process_images_async(batch_images, batch_labels, db_name)
+                        batches[db_name] = ([], [])
 
-    def handle_add_images(self, images: dict[str, bytes]) -> int:
+    def handle_add_images(self, images: dict[str, bytes], db_name: str = DB_NAME) -> int:
         """
         Add images to the search index.
 
         Args:
             images: Dictionary mapping labels to image bytes
+            db_name: Name of the database to add images to
 
         Returns:
             Number of images queued for processing
         """
-        logger.info(f'[AddImages] {len(images)} images received')
+        logger.info(f'[AddImages] {len(images)} images received for db: {db_name}')
 
         queued_count = 0
         try:
             for label, image_bytes in images.items():
                 image = bytes2img(image_bytes)
-                self.image_queue.put((label, image))
+                self.image_queue.put((label, image, db_name))
                 queued_count += 1
-        except Exception as e:
+        except Full as e:
             logger.warning(f'Queue full, dropping image: {e}')
 
         logger.info(f'Queued {queued_count} images for processing')
         return queued_count
 
-    def handle_search(self, query: Any, k: int = 10) -> list[tuple[str, float]] | None:
+    def handle_search(self, query: Any, k: int = 10, db_name: str = DB_NAME) -> list[tuple[str, float]] | None:
         """
         Search for similar images using image or text query.
 
         Args:
             query: Text description or image bytes to search for
             k: Number of results to return
+            db_name: Name of the database to search in
 
         Returns:
             List of tuples containing (image_path, similarity_percentage)
@@ -142,7 +146,7 @@ class RPCService:
             return None
 
         try:
-            logger.info(f'[Search] type={type(query).__name__}, k={k}')
+            logger.info(f'[Search] type={type(query).__name__}, k={k}, db={db_name}')
 
             # Handle Pyro5 serialization quirks
             if isinstance(query, str):
@@ -173,38 +177,47 @@ class RPCService:
                 logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
                 return []
 
-            return self.db.search(feature, k)
+            db = VectorDB(db_name, self.base_dir)
+            return db.search(feature, k)
         except Exception as e:
             logger.error(f'Text search failed: {e}')
             return []
         finally:
             self.search_semaphore.release()
 
-    def handle_get_db_info(self) -> dict:
+    def handle_get_db_info(self, db_name: str = DB_NAME) -> dict:
         """
         Get database information.
+
+        Args:
+            db_name: Name of the database to get info for
 
         Returns:
             Dictionary containing database statistics (base_dir, size, capacity)
         """
+        db = VectorDB(db_name, self.base_dir)
         return {
-            'base_dir': str(self.db.db_path.parent.resolve()),
-            'Database': self.db.db_path.name,
-            'size': self.db.size,
-            'capacity': self.db.capacity,
+            'base': str(db.base.resolve()),
+            'name': db_name,
+            'size': db.size,
+            'capacity': db.capacity,
         }
 
-    def handle_clear_db(self) -> bool:
+    def handle_clear_db(self, db_name: str = DB_NAME) -> bool:
         """
         Clear all images from the database.
+
+        Args:
+            db_name: Name of the database to clear
 
         Returns:
             True if successful, False otherwise
         """
-        logger.warning('[Clear] Clearing database...')
+        logger.warning(f'[Clear] Clearing database: {db_name}')
+        db = VectorDB(db_name, self.base_dir)
         with self._lock:
-            self.db.clear()
-            logger.warning('Database cleared')
+            db.clear()
+            logger.warning(f'Database {db_name} cleared')
             return True
 
     def handle_compare_images(self, path1: str, path2: str) -> float:
@@ -231,12 +244,14 @@ class RPCService:
 class Server:
     """Server for the RPC service with pid file management and signal handling."""
 
-    def __init__(self):
+    def __init__(self, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL):
         self.daemon = None
         self._shutdown_requested = False
         self._restart_requested = False
         self.service = None
-        self.pid_file = BASE_DIR / 'pixa.pid'
+        self.base_dir = base_dir
+        self.model_name = model_name
+        self.pid_file = self.base_dir / 'pixa.pid'
 
     def _write_pid_file(self):
         """Write current process ID to pid file."""
@@ -296,8 +311,7 @@ class Server:
             signal.signal(signal.SIGINT, self.handle_signal)
 
             # Initialize service
-            logger.info('Loading clip models and database...')
-            self.service = RPCService()
+            self.service = RPCService(base_dir=self.base_dir, model_name=self.model_name)
             self.daemon = Pyro5.server.Daemon(unixsocket=str(UNIX_SOCKET))
             self.daemon.register(self.service, objectId=SERVICE_NAME)
 
@@ -305,8 +319,8 @@ class Server:
             logger.info(f'Listening on: {UNIX_SOCKET}')
             logger.info(f'Serializer: {Pyro5.config.SERIALIZER}')
             logger.info(f'PID: {os.getpid()}')
-            logger.info(f'DB path: {self.service.db.db_path}')
-            logger.info(f'DB size: {self.service.db.size}')
+            logger.info(f'Base dir: {self.base_dir}')
+            logger.info(f'Model: {self.model_name}')
             logger.info('Pixa service started')
 
             self.daemon.requestLoop()
@@ -354,14 +368,6 @@ class Server:
 
     def cleanup(self):
         """Cleanup resources before exit."""
-        # Save database before exit
-        if self.service and hasattr(self.service, 'db'):
-            try:
-                self.service.db.save()
-                logger.info('Database saved successfully')
-            except Exception as e:
-                logger.error(f'Failed to save database: {e}')
-
         # Cleanup socket
         if UNIX_SOCKET.exists():
             logger.info('Cleaning up socket')

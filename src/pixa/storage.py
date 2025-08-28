@@ -14,10 +14,12 @@ class VectorDB:
     """Vector database for storing and searching item features"""
 
     def __init__(self, db_name: str = DB_NAME, base_dir: Path = BASE_DIR) -> None:
-        self.db_path = (base_dir / db_name).resolve()
-        self.idx_path = self.db_path / IDX_NAME
-        self.map_path = self.db_path / MAP_NAME
-        self.index, self.mapping = self.load_db(self.db_path)
+        self.name = db_name
+        self.base = base_dir
+        self.path = (base_dir / db_name).resolve()
+        self.idx_path = self.path / IDX_NAME
+        self.map_path = self.path / MAP_NAME
+        self.index, self.mapping = self.load_db(self.path)
 
     @property
     def size(self) -> int:
