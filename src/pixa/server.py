@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import threading
@@ -16,7 +17,7 @@ from pixa.utils import bytes2img, get_logger, print_err
 Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-logger = get_logger('PixaService')
+logger = get_logger('PixaService', logging.INFO)
 
 
 @Pyro5.server.expose
@@ -66,7 +67,7 @@ class RPCService:
 
     def _process_images_async(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
-        logger.debug(f'Processing batch of {len(images)} images: "{db_name}"')
+        logger.debug(f'Processing batch of {len(images)} images ({db_name})')
         try:
             features = self.clip.embed_images(images)
 
@@ -184,7 +185,7 @@ class RPCService:
                 logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
                 return []
 
-            db = VectorDB(db_name, self.base_dir)
+            db = self._get_db(db_name)
             return db.search(feature, k, similarity)
         except Exception as e:
             logger.error(f'Text search failed: {e}')
@@ -202,7 +203,7 @@ class RPCService:
         Returns:
             Dictionary containing database statistics (base_dir, size, capacity)
         """
-        db = VectorDB(db_name, self.base_dir)
+        db = self._get_db(db_name)
         return {
             'base': str(db.base.resolve()),
             'name': db_name,
@@ -221,7 +222,7 @@ class RPCService:
             True if successful, False otherwise
         """
         logger.warning(f'[Clear] Clear database: {db_name}')
-        db = VectorDB(db_name, self.base_dir)
+        db = self._get_db(db_name)
         with self._lock:
             db.clear()
             logger.debug(f'Database {db_name} cleared')

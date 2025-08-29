@@ -125,7 +125,7 @@ class VectorDB:
     def clear(self):
         """Clear database"""
         self.index = self.new_index()
-        self.mapping.clear()
+        self.mapping = bidict()
         self.save()
 
     def search(self, feature: Feature, k: int = 10, similarity: float = 0.0) -> list[tuple[str, float]]:

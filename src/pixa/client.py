@@ -258,16 +258,16 @@ def main() -> None:  # noqa: C901
 
     elif args.info:
         if info := client.get_db_info():
-            print('Database Information:')
+            print(f'Database "{args.db_name}":')
             for key, value in info.items():
                 print(f'  - {key.title().replace("_", "")}: {value}')
 
     elif args.clear:
-        if input('Are you sure you want to clear the entire database? [y/N]: ').lower() == 'y':
+        if input(f'Are you sure to clear the database "{args.db_name}" ? [y/N]: ').lower() == 'y':
             if client.clear_db():
-                print_warn('Database has been cleared.')
+                print_warn(f'Database "{args.db_name}" has been cleared.')
             else:
-                print_err('Failed to clear the database.')
+                print_err(f'Failed to clear the database "{args.db_name}".')
         else:
             print_warn('Operation cancelled.')
 
