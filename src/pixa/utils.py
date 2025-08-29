@@ -1,4 +1,6 @@
 import logging
+import platform
+import subprocess  # noqa: S404
 import sys
 from collections.abc import Sequence
 from io import BytesIO
@@ -7,9 +9,15 @@ from pathlib import Path
 
 from PIL import Image
 
+from pixa.consts import BASE_DIR
+
 # 定义颜色
 RED = '\x1b[31m'  # 红色
+GREEN = '\x1b[32m'  # 绿色
 YELLOW = '\x1b[33m'  # 黄色
+BLUE = '\x1b[34m'  # 蓝色
+MAGENTA = '\x1b[35m'  # 品红
+CYAN = '\x1b[36m'  # 青色
 WHITE = '\x1b[37m'  # 白色
 GRAY = '\x1b[90m'  # 灰色
 END = '\x1b[0m'
@@ -88,6 +96,8 @@ class ColorFormatter(logging.Formatter):
         match level:
             case 'DEBUG':
                 return f'{GRAY}{message}{END}'
+            case 'INFO':
+                return f'{BLUE}{message}{END}'
             case 'WARNING':
                 return f'{YELLOW}{message}{END}'
             case 'ERROR':
@@ -102,17 +112,41 @@ class ColorFormatter(logging.Formatter):
         return self.colorize(record.levelname, message)
 
 
-def get_logger(name: str, level: int = logging.INFO):
-    """Setup logging"""
+def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
+    """Setup logging based on TTY status"""
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    # Console handler with colors
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(level)
-    color_formatter = ColorFormatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    console_handler.setFormatter(color_formatter)
+    logger.handlers.clear()  # Remove existing handlers to avoid duplication
 
-    # Add handlers
-    logger.addHandler(console_handler)
+    # Check if running in TTY (foreground) or background
+    handler: logging.Handler
+    if sys.stderr.isatty():
+        # Foreground: use console handler with colors
+        handler = logging.StreamHandler()
+        handler.setLevel(level)
+    else:
+        # Background: use file handler
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f'{name.lower()}.log'
+        handler = logging.FileHandler(log_file)
+        handler.setLevel(level)
+    formatter = ColorFormatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
     logger.propagate = False
     return logger
+
+
+def open_images(paths: list[str | Path]):
+    """Open images with system default image viewer"""
+    system = platform.system()
+    try:
+        if system == 'Windows':
+            subprocess.run(['explorer', *paths])  # type: ignore  # noqa: S603, S607
+        elif system == 'Darwin':  # macOS
+            subprocess.run(['open', *paths])  # type: ignore  # noqa: S603, S607
+        else:  # Linux
+            subprocess.run(['xdg-open', *paths])  # type: ignore  # noqa: S603, S607
+    except Exception as e:
+        print_err(f'Failed to open images: {e}')

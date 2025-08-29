@@ -128,20 +128,33 @@ class VectorDB:
         self.mapping.clear()
         self.save()
 
-    def search(self, feature: Feature, k: int = 10) -> list[tuple[str, float]]:
-        """Search items by feature vector"""
+    def search(self, feature: Feature, k: int = 10, similarity: float = 0.0) -> list[tuple[str, float]]:
+        """Search items by feature vector with similarity filtering"""
         if self.index is None or self.size == 0:
             return []
 
-        # Search for similar items
-        v_ids, distances = self.index.knn_query([feature], k=min(k, self.size))
+        # Validate similarity parameter
+        if similarity < 0.0 or similarity > 100.0:
+            raise ValueError('similarity must be between 0 and 100')
 
-        # Convert results to (path, similarity) tuples
+        # If no similarity filtering, use original behavior
+        if similarity == 0.0:
+            v_ids, distances = self.index.knn_query([feature], k=min(k, self.size))
+        else:
+            # Dynamic search with similarity filtering
+            search_k = min(k * 3, self.size)
+            v_ids, distances = self.index.knn_query([feature], k=search_k)
+
+        # Convert results to (path, similarity) tuples with filtering
         results = []
         for vid, distance in zip(v_ids[0], distances[0], strict=True):
             if vid in self.mapping:
                 # Convert distance to similarity
-                similarity = round((1.0 - distance) * 100)
-                results.append((self.mapping[vid], similarity))
+                res_similarity = round((1.0 - distance) * 100)
+                if res_similarity >= similarity:
+                    results.append((self.mapping[vid], res_similarity))
+                    # break if results are enough
+                    if len(results) >= k:
+                        break
 
-        return results
+        return results[:k]

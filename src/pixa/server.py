@@ -53,24 +53,29 @@ class RPCService:
         self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
 
-    def get_db(self, db_name: str = DB_NAME):
+    def _get_db(self, db_name: str = DB_NAME):
         """Get database instance"""
         if db_name not in self.databases:
             self.databases[db_name] = VectorDB(db_name, self.base_dir)
         return self.databases[db_name]
 
+    def exists_in_db(self, label: str, db_name: str = DB_NAME):
+        """Check if a label exists in the database"""
+        db = self._get_db(db_name)
+        return db.has_label(label)
+
     def _process_images_async(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
-        logger.info(f'Processing batch of {len(images)} images for db: {db_name}')
+        logger.debug(f'Processing batch of {len(images)} images: "{db_name}"')
         try:
             features = self.clip.embed_images(images)
 
             with self._lock:
-                db = self.get_db(db_name)
+                db = self._get_db(db_name)
                 db.add_items(labels, features)
                 db.save()
 
-            logger.info(f'Processed {len(images)} images for db "{db_name}"')
+            logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.size=})')
 
         except Exception as e:
             logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
@@ -121,18 +126,20 @@ class RPCService:
                 self.image_queue.put((label, image, db_name))
                 queued_count += 1
         except Full as e:
-            logger.warning(f'Queue full, dropping image: {e}')
+            logger.error(f'Queue full, dropping image: {e}')
 
-        logger.info(f'Queued {queued_count} images for processing')
         return queued_count
 
-    def handle_search(self, query: Any, k: int = 10, db_name: str = DB_NAME) -> list[tuple[str, float]] | None:
+    def handle_search(
+        self, query: Any, k: int = 10, similarity: float = 0.0, db_name: str = DB_NAME
+    ) -> list[tuple[str, float]] | None:
         """
         Search for similar images using image or text query.
 
         Args:
             query: Text description or image bytes to search for
             k: Number of results to return
+            similarity: Minimum similarity threshold (0-100)
             db_name: Name of the database to search in
 
         Returns:
@@ -142,11 +149,11 @@ class RPCService:
         """
         # Non-blocking concurrency control
         if not self.search_semaphore.acquire(blocking=False):
-            logger.warning(f'[Search] Rejected - {self.max_concurrent_searches} concurrent searches active')
+            logger.info(f'[Search] Rejected - {self.max_concurrent_searches} concurrent searches active')
             return None
 
         try:
-            logger.info(f'[Search] type={type(query).__name__}, k={k}, db={db_name}')
+            logger.info(f'[Search] type={type(query).__name__}, {k=}, {similarity=}, {db_name=}')
 
             # Handle Pyro5 serialization quirks
             if isinstance(query, str):
@@ -178,7 +185,7 @@ class RPCService:
                 return []
 
             db = VectorDB(db_name, self.base_dir)
-            return db.search(feature, k)
+            return db.search(feature, k, similarity)
         except Exception as e:
             logger.error(f'Text search failed: {e}')
             return []
@@ -213,11 +220,11 @@ class RPCService:
         Returns:
             True if successful, False otherwise
         """
-        logger.warning(f'[Clear] Clearing database: {db_name}')
+        logger.warning(f'[Clear] Clear database: {db_name}')
         db = VectorDB(db_name, self.base_dir)
         with self._lock:
             db.clear()
-            logger.warning(f'Database {db_name} cleared')
+            logger.debug(f'Database {db_name} cleared')
             return True
 
     def handle_compare_images(self, path1: str, path2: str) -> float:
@@ -272,7 +279,7 @@ class Server:
         try:
             if self.pid_file.exists():
                 self.pid_file.unlink()
-                logger.info('PID file removed')
+                logger.debug('PID file removed')
         except Exception as e:
             logger.error(f'Failed to remove PID file: {e}')
 
@@ -316,11 +323,11 @@ class Server:
             self.daemon.register(self.service, objectId=SERVICE_NAME)
 
             # log service info
-            logger.info(f'Listening on: {UNIX_SOCKET}')
-            logger.info(f'Serializer: {Pyro5.config.SERIALIZER}')
-            logger.info(f'PID: {os.getpid()}')
-            logger.info(f'Base dir: {self.base_dir}')
-            logger.info(f'Model: {self.model_name}')
+            logger.debug(f'Listening on: {UNIX_SOCKET}')
+            logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
+            logger.debug(f'PID: {os.getpid()}')
+            logger.debug(f'Base dir: {self.base_dir}')
+            logger.debug(f'Model: {self.model_name}')
             logger.info('Pixa service started')
 
             self.daemon.requestLoop()
@@ -339,12 +346,12 @@ class Server:
 
         match signum:
             case signal.SIGTERM | signal.SIGINT:
-                logger.warning(f'Received SIG-{signum}, shutting down gracefully...')
+                logger.debug(f'Received SIG-{signum}, shutting down gracefully...')
                 self._shutdown_requested = True
                 if self.daemon:
                     self.daemon.shutdown()
             case signal.SIGHUP:
-                logger.warning('Received SIGHUP, ignoring (restart not supported)')
+                logger.debug('Received SIGHUP, ignoring (restart not supported)')
 
     def stop(self):
         """Stop the running server."""
@@ -368,9 +375,17 @@ class Server:
 
     def cleanup(self):
         """Cleanup resources before exit."""
+        if isinstance(self.service, RPCService):
+            for name, db in self.service.databases.items():
+                try:
+                    db.save()
+                    logger.debug(f'Database "{name}" saved')
+                except Exception as e:
+                    logger.error(f'Failed to save db "{name}": {e}')
+
         # Cleanup socket
         if UNIX_SOCKET.exists():
-            logger.info('Cleaning up socket')
+            logger.debug('Cleaning up socket')
             UNIX_SOCKET.unlink()
 
         # Remove pid file
