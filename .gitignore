@@ -16,6 +16,9 @@ uv.lock
 # mypy
 .mypy_cache/
 
+# pytest
+.coverage
+
 # Dev env
 .DS_Store
 .vscode/

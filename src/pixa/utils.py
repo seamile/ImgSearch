@@ -138,7 +138,7 @@ def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
     return logger
 
 
-def open_images(paths: list[str | Path]):
+def open_images(paths: Sequence[str | Path]):
     """Open images with system default image viewer"""
     system = platform.system()
     try:
