@@ -9,6 +9,7 @@ import Pyro5.api
 import Pyro5.errors
 from PIL import Image
 
+from pixa import __version__
 from pixa.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
 from pixa.utils import find_all_images, img2bytes, is_image, open_images, print_err, print_warn
 
@@ -217,6 +218,8 @@ def create_parser() -> ArgumentParser:
         default=0.0,
         help='Minimum similarity threshold (0-100, default: 0.0)',
     )
+
+    group.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
 
     return parser
 
