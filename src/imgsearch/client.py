@@ -9,30 +9,30 @@ import Pyro5.api
 import Pyro5.errors
 from PIL import Image
 
-from pixa import __version__
-from pixa.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from pixa.utils import find_all_images, img2bytes, is_image, open_images, print_err, print_warn
+from imgsearch import __version__
+from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
+from imgsearch.utils import find_all_images, img2bytes, is_image, open_images, print_err, print_warn
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
 
 
 class Client:
     """
-    Pixa client for interacting with the pixa service.
+    ImgSearch client for interacting with the imgsearch service.
 
-    This client provides a command-line interface to the pixa service,
+    This client provides a command-line interface to the imgsearch service,
     supporting image search, database management, and service control operations.
     """
 
     def __init__(self, db_name: str = DB_NAME) -> None:
-        """Initialize the pixa client."""
+        """Initialize the imgsearch client."""
         self.db_name = db_name
 
     def connect_to_service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not UNIX_SOCKET.exists():
             print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-            print_err('You can start the service with: px -s start')
+            print_err('You can start the service with: isearch -s start')
             sys.exit(1)
 
         try:
@@ -45,7 +45,7 @@ class Client:
             return service
         except Pyro5.errors.CommunicationError:
             print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-            print_err('Is the pixa service running? Check with: px -s status')
+            print_err('Is the imgsearch service running? Check with: isearch -s status')
             sys.exit(1)
         except Exception as e:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
@@ -173,7 +173,7 @@ class Client:
 
 def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
-    parser = ArgumentParser(prog='pixa', description='Pixa - A local image search engine.')
+    parser = ArgumentParser(prog='imgsearch', description='ImgSearch - A local image search engine.')
 
     # Main commands
     group = parser.add_mutually_exclusive_group()
@@ -185,7 +185,7 @@ def create_parser() -> ArgumentParser:
 
     # Service management commands
     srv_cmds = ['start', 'stop', 'status']
-    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the pixa service')
+    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the imgsearch service')
 
     # Optional arguments
     parser.add_argument(

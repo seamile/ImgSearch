@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pixa command line entry point
+ImgSearch command line entry point
 """
 
 from .client import main

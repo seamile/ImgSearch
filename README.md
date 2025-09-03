@@ -1,20 +1,34 @@
-# Pixa 搜图
+# ImgSearch 搜图
 
-[🇨🇳 中文](#Pixa-搜图) ⇌ [🇬🇧 English](#Pixa)
+[🇨🇳 中文](#ImgSearch-搜图) ⇌ [🇬🇧 English](#ImgSearch)
 
-Pixa 是一款轻量级的图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。资源占用低，适合部署在性能有限的机器上。可以依靠显卡提升性能，也可以完全以纯 CPU 模式运行。支持命令行直接使用，也可作为 Python 模块集成到其他系统。
+ImgSearch 是一款轻量级的图片搜索引擎，可以用来以图搜图，也可以通过文字描述搜索图片。它基于 TinyCLIP 和 HNSWlib 构建，速度快，资源占用低，可以部署在仅有 2G 内存的机器上。可以作为独立的图片搜索引擎使用，也可以作为一个 Python 库集成到其他系统中。
 
 ## 特性
 
-- [x] 支持以图搜图、以关键字搜图
+- [x] 支持以图搜图
+- [x] 支持以关键字搜图
 - [x] 支持对比两张图片的相似度
-- [x] 支持批量添加图片（文件或文件夹）
-- [x] 支持指定 CLIP 模型
+- [x] 支持批量添加图片（指定文件或文件夹）
 
 ## 安装
 
+### 默认安装
+
 ```shell
-pip install pixa
+pip install imgsearch
+```
+
+### 纯 CPU 环境
+
+如果您希望在纯 CPU 环境下使用 ImgSearch，需要在执行上面命令之前先安装 CPU 版的 PyTorch：
+
+```shell
+# install CPU-only version of PyTorch
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# install ImgSearch
+pip install imgsearch
 ```
 
 ## 快速开始
@@ -24,19 +38,19 @@ pip install pixa
 #### 启动服务
 
 ```shell
-px -s start
+isearch -s start
 ```
 
 #### 停止服务
 
 ```shell
-px -s stop
+isearch -s stop
 ```
 
 #### 查看状态
 
 ```shell
-px -s status
+isearch -s status
 ```
 
 ### 2. 添加图片到图像索引
@@ -44,7 +58,7 @@ px -s status
 将指定路径的图片添加到数据库中。目标可为单张图片或文件夹（递归添加所有图片）。支持 jpg、jpeg、png、bmp、webp 等常见格式。
 
 ```shell
-px -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
+isearch -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
 ```
 
 ### 3. 搜索图片
@@ -54,13 +68,13 @@ px -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
 #### 以图搜图
 
 ```shell
-px /path/to/query_image.jpg
+isearch /path/to/query_image.jpg
 ```
 
 #### 以关键词搜图
 
 ```shell
-px -n 3 "red flower"
+isearch -n 3 "red flower"
 ```
 
 ### 4. 其他功能
@@ -68,34 +82,34 @@ px -n 3 "red flower"
 #### 查看数据库信息
 
 ```shell
-px -i
+isearch -i
 ```
 
 #### 比较两张图片的相似度
 
 ```shell
-px -c ./foo/img1.png ./bar/img2.jpg
+isearch -c ./foo/img1.png ./bar/img2.jpg
 ```
 
 #### 清空数据库
 
 ```shell
-px -C
+isearch -C
 ```
 
 ### 5. 可选参数列表
 
-- `-d DB_DIR`   指定数据库目录路径（默认: ~/.pixa）
+- `-d DB_DIR`   指定数据库目录路径（默认: ~/.isearch）
 - `-l {path,name}` 标签命名方式：path=绝对路径，name=文件名
 - `-m MODEL`    CLIP 模型名称（如 tinyclip-vit-large）
 - `-n NUM`      搜索结果数量（默认: 10）
 
 ### 6. 作为模块导入
 
-Pixa 也可作为 Python 模块集成：
+ImgSearch 也可作为 Python 模块集成：
 
 ```python
-from pixa.client import Client
+from imgsearch.client import Client
 
 # 创建客户端
 cli = Client()
@@ -121,7 +135,7 @@ print(f'相似度: {similarity}%')
 ## 目录结构
 
 ```
-pixa/
+imgsearch/
 ├ __main__.py      # 命令行入口
 ├ client.py        # 客户端 API
 ├ server.py        # 服务端主逻辑
@@ -144,23 +158,37 @@ MIT License
 
 ---
 
-# Pixa
+# ImgSearch
 
-[🇬🇧 English](#Pixa) ⇌ [🇨🇳 中文](#Pixa-搜图)
+[🇬🇧 English](#ImgSearch) ⇌ [🇨🇳 中文](#ImgSearch-搜图)
 
-Pixa is a lightweight image search engine that supports both image-to-image and text-to-image search. It is resource-efficient and can be deployed on low-end machines. You can use it directly from the command line or integrate it as a Python module in other systems.
+ImgSearch is a lightweight image search engine that supports both image-to-image and text-to-image search. Built on TinyCLIP and HNSWlib, it's fast and resource-efficient, capable of running on machines with just 2GB of RAM. It can be used as a standalone image search engine or integrated as a Python module into other systems.
 
 ## Features
 
-- [x] Search by image or text
+- [x] Image-to-image search
+- [x] Text-to-image search
 - [x] Compare similarity between two images
 - [x] Batch add images (files or folders)
-- [x] Customizable CLIP model
 
 ## Installation
 
+### Default Installation
+
 ```shell
-pip install pixa
+pip install imgsearch
+```
+
+### CPU-only Environment
+
+If you want to use ImgSearch in a CPU-only environment, you need to install the CPU-only version of PyTorch before running the above command:
+
+```shell
+# install CPU-only version of PyTorch
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# install ImgSearch
+pip install imgsearch
 ```
 
 ## Quick Start
@@ -170,19 +198,19 @@ pip install pixa
 #### Start Service
 
 ```shell
-px -s start
+isearch -s start
 ```
 
 #### Stop Service
 
 ```shell
-px -s stop
+isearch -s stop
 ```
 
 #### Check Status
 
 ```shell
-px -s status
+isearch -s status
 ```
 
 ### 2. Add Images to Index
@@ -190,7 +218,7 @@ px -s status
 Add images to the database by specifying file or folder paths (recursively adds all images in folders). Supports jpg, jpeg, png, bmp, webp, etc.
 
 ```shell
-px -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
+isearch -a ./foo/img1.png ./bar/img2.jpg ./path/to/images_dir/
 ```
 
 ### 3. Search Images
@@ -200,13 +228,13 @@ Search by sample image or text description. Use `-n` to specify the number of re
 #### Image-to-Image Search
 
 ```shell
-px /path/to/query_image.jpg
+isearch /path/to/query_image.jpg
 ```
 
 #### Text-to-Image Search
 
 ```shell
-px -n 3 "red flower"
+isearch -n 3 "red flower"
 ```
 
 ### 4. Other Features
@@ -214,34 +242,34 @@ px -n 3 "red flower"
 #### View Database Info
 
 ```shell
-px -i
+isearch -i
 ```
 
 #### Compare Two Images
 
 ```shell
-px -c ./foo/img1.png ./bar/img2.jpg
+isearch -c ./foo/img1.png ./bar/img2.jpg
 ```
 
 #### Clear Database
 
 ```shell
-px -C
+isearch -C
 ```
 
 ### 5. Optional Arguments
 
-- `-d DB_DIR`   Specify database directory (default: ~/.pixa)
+- `-d DB_DIR`   Specify database directory (default: ~/.isearch)
 - `-l {path,name}` Label naming: path=absolute path, name=file name
 - `-m MODEL`    CLIP model name (e.g. tinyclip-vit-large)
 - `-n NUM`      Number of search results (default: 10)
 
 ### 6. As a Python Module
 
-Pixa can also be used as a Python module:
+ImgSearch can also be used as a Python module:
 
 ```python
-from pixa.client import Client
+from imgsearch.client import Client
 
 # Create client
 cli = Client()
@@ -267,7 +295,7 @@ print(f'Similarity: {similarity}%')
 ## Directory Structure
 
 ```
-pixa/
+imgsearch/
 ├ __main__.py      # CLI entry
 ├ client.py        # Client API
 ├ server.py        # Server logic

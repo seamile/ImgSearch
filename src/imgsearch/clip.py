@@ -6,8 +6,8 @@ import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
-from pixa.consts import DEFAULT_MODEL
-from pixa.utils import Feature
+from imgsearch.consts import DEFAULT_MODEL
+from imgsearch.utils import Feature
 
 # Disable transformers warnings
 for name, logger in logging.Logger.manager.loggerDict.items():

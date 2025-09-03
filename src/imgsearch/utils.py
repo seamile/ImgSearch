@@ -7,9 +7,8 @@ from io import BytesIO
 from itertools import islice
 from pathlib import Path
 
+from imgsearch.consts import BASE_DIR
 from PIL import Image
-
-from pixa.consts import BASE_DIR
 
 # 定义颜色
 RED = '\x1b[31m'  # 红色
@@ -127,7 +126,7 @@ def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
     else:
         # Background: use file handler
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / 'pixa.log'
+        log_file = log_dir / 'imgsearch.log'
         handler = logging.FileHandler(log_file)
         handler.setLevel(level)
     formatter = ColorFormatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')

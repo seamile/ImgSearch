@@ -10,9 +10,8 @@ from pickle import dump  # noqa: S403
 import pytest
 from bidict import bidict
 from hnswlib import Index
-
-from pixa.consts import CAPACITY
-from pixa.storage import VectorDB
+from imgsearch.consts import CAPACITY
+from imgsearch.storage import VectorDB
 
 
 class TestVectorDB(unittest.TestCase):

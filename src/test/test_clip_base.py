@@ -5,7 +5,7 @@ Base unit tests for clip.py module - focusing on core functionality with mocks
 import unittest
 from unittest.mock import Mock, patch
 
-from pixa.clip import Clip
+from imgsearch.clip import Clip
 
 
 @patch('transformers.CLIPProcessor.from_pretrained', return_value=Mock(name='mock_processor'))

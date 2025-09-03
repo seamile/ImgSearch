@@ -10,14 +10,14 @@ from typing import Any
 import Pyro5.server
 from PIL import Image
 
-from pixa.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from pixa.storage import VectorDB
-from pixa.utils import bytes2img, get_logger, print_err
+from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
+from imgsearch.storage import VectorDB
+from imgsearch.utils import bytes2img, get_logger, print_err
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-logger = get_logger('PixaService', logging.INFO)
+logger = get_logger('ImgSearchService', logging.INFO)
 
 
 @Pyro5.server.expose
@@ -38,7 +38,7 @@ class RPCService:
             base_dir: Path to the database base directory
             model_name: Name of the CLIP model to use
         """
-        from pixa.clip import Clip  # import when needed
+        from imgsearch.clip import Clip  # import when needed
 
         self.clip = Clip(model_name)
         self.base_dir = base_dir
@@ -259,7 +259,7 @@ class Server:
         self.service = None
         self.base_dir = base_dir
         self.model_name = model_name
-        self.pid_file = self.base_dir / 'pixa.pid'
+        self.pid_file = self.base_dir / 'imgsearch.pid'
 
     def _write_pid_file(self):
         """Write current process ID to pid file."""
@@ -308,7 +308,7 @@ class Server:
             UNIX_SOCKET.unlink()
 
         try:
-            logger.info('Starting Pixa Service...')
+            logger.info('Starting ImgSearch Service...')
 
             # Create pid file
             self._write_pid_file()
@@ -329,7 +329,7 @@ class Server:
             logger.debug(f'PID: {os.getpid()}')
             logger.debug(f'Base dir: {self.base_dir}')
             logger.debug(f'Model: {self.model_name}')
-            logger.info('Pixa service started')
+            logger.info('ImgSearch service started')
 
             self.daemon.requestLoop()
 
@@ -358,7 +358,7 @@ class Server:
         """Stop the running server."""
         pid = self._read_pid_file()
         if not pid:
-            print_err('Pixa service is not running')
+            print_err('ImgSearch service is not running')
             return False
 
         if not self.is_running(pid):
@@ -395,15 +395,15 @@ class Server:
     @classmethod
     def status(cls):
         """Check server status."""
-        pid_file = BASE_DIR / 'pixa.pid'
+        pid_file = BASE_DIR / 'imgsearch.pid'
         if not pid_file.exists():
-            print_err('Pixa service is not running')
+            print_err('ImgSearch service is not running')
             return False
 
         try:
             pid = int(pid_file.read_text().strip())
             if cls.is_running(pid):
-                print(f'Pixa service is running (PID: {pid})')
+                print(f'ImgSearch service is running (PID: {pid})')
                 return True
             else:
                 print_err('PID file exists but process is not running')

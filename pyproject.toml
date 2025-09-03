@@ -1,7 +1,7 @@
 [project]
-name = "pixa"
+name = "imgsearch"
 version = "0.1.1"
-description = "Pixa is a lightweight image search engine that supports searching images by image."
+description = "ImgSearch is a lightweight image search engine that supports searching images by image."
 readme = "README.md"
 authors = [
     { name = "Seamile", email = "lanhuermao@gmail.com" }
@@ -30,7 +30,6 @@ dependencies = [
     "pillow>=11.3.0",
     "pyro5>=5.15",
     "transformers>=4.56.0",
-    "open-clip-torch>=3.1.0",
 ]
 
 [dependency-groups]
@@ -40,8 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-pixa = "pixa.client:main"
-px = "pixa.client:main"  # alias
+isearch = "imgsearch.client:main"
 
 [build-system]
 requires = ["uv_build>=0.8.6,<0.9.0"]

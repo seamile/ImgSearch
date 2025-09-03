@@ -8,9 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image
-
-from pixa.utils import (
+from imgsearch.utils import (
     ColorFormatter,
     bytes2img,
     find_all_images,
@@ -22,6 +20,7 @@ from pixa.utils import (
     print_err,
     print_warn,
 )
+from PIL import Image
 
 
 class TestUtils(unittest.TestCase):
@@ -336,7 +335,7 @@ class TestUtils(unittest.TestCase):
         mock_system.return_value = 'Linux'
         mock_run.side_effect = Exception('Command not found')
 
-        with patch('pixa.utils.print_err') as mock_print_err:
+        with patch('imgsearch.utils.print_err') as mock_print_err:
             open_images(['test.jpg'])
             mock_print_err.assert_called_once()
 

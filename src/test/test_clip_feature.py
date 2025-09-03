@@ -7,9 +7,8 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import torch
+from imgsearch.clip import Clip
 from PIL import Image
-
-from pixa.clip import Clip
 
 
 @patch('transformers.CLIPModel.from_pretrained', return_value=Mock(name='mock_model'))
