@@ -65,7 +65,7 @@ class RPCService:
         db = self._get_db(db_name)
         return db.has_label(label)
 
-    def _process_images_async(self, images: list[Image.Image], labels: list[str], db_name: str):
+    def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
         logger.debug(f'Processing batch of {len(images)} images ({db_name})')
         try:
@@ -97,14 +97,14 @@ class RPCService:
 
                 # Process batch when full
                 if len(batch_images) >= BATCH_SIZE:
-                    self._process_images_async(batch_images, batch_labels, db_name)
+                    self._process_images(batch_images, batch_labels, db_name)
                     batches[db_name] = ([], [])
 
             except Exception:
                 # Process remaining images in all batches
                 for db_name, (batch_images, batch_labels) in batches.items():
                     if batch_images:
-                        self._process_images_async(batch_images, batch_labels, db_name)
+                        self._process_images(batch_images, batch_labels, db_name)
                         batches[db_name] = ([], [])
 
     def handle_add_images(self, images: dict[str, bytes], db_name: str = DB_NAME) -> int:

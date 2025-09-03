@@ -1,8 +1,8 @@
 from pathlib import Path
 
 # The default model to use.
-DEFAULT_MODEL = 'wkcn/TinyCLIP-ViT-61M-32-Text-29M-LAION400M'
-BATCH_SIZE = 10
+DEFAULT_MODEL = 'wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M'
+BATCH_SIZE = 50
 
 # The paths for the database files.
 BASE_DIR = Path.home() / '.pixa'

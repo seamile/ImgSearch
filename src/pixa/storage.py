@@ -95,8 +95,12 @@ class VectorDB:
         self.index.add_items([feature], [item_id], replace_deleted=True)
         self.mapping[item_id] = label
 
-    def add_items(self, labels: list[str], features: list[Feature]):
+    def add_items(self, labels: list[str], features: list[Feature], override: bool = False):
         """Add multiple items to index"""
+        # TODO:
+        # Check whether the label already exists. If override is True,
+        # overwrite the old values, otherwise ignore existing labels
+
         incr_size = len(features)
         if incr_size <= 0 or len(labels) != incr_size:
             raise ValueError('Invalid labels or features')
