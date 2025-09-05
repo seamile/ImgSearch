@@ -7,12 +7,13 @@ from pathlib import Path
 from queue import Full, Queue
 from typing import Any
 
+import psutil
 import Pyro5.server
 from PIL import Image
 
 from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
 from imgsearch.storage import VectorDB
-from imgsearch.utils import bytes2img, get_logger, print_err
+from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -132,7 +133,7 @@ class RPCService:
         return queued_count
 
     def handle_search(
-        self, query: Any, k: int = 10, similarity: float = 0.0, db_name: str = DB_NAME
+        self, query: Any, k: int = 10, similarity: int = 0, db_name: str = DB_NAME
     ) -> list[tuple[str, float]] | None:
         """
         Search for similar images using image or text query.
@@ -259,7 +260,7 @@ class Server:
         self.service = None
         self.base_dir = base_dir
         self.model_name = model_name
-        self.pid_file = self.base_dir / 'imgsearch.pid'
+        self.pid_file = self.base_dir / 'isearch.pid'
 
     def _write_pid_file(self):
         """Write current process ID to pid file."""
@@ -329,7 +330,7 @@ class Server:
             logger.debug(f'PID: {os.getpid()}')
             logger.debug(f'Base dir: {self.base_dir}')
             logger.debug(f'Model: {self.model_name}')
-            logger.info('ImgSearch service started')
+            logger.info('iSearch service started')
 
             self.daemon.requestLoop()
 
@@ -358,7 +359,7 @@ class Server:
         """Stop the running server."""
         pid = self._read_pid_file()
         if not pid:
-            print_err('ImgSearch service is not running')
+            print_err('iSearch service is not running')
             return False
 
         if not self.is_running(pid):
@@ -395,15 +396,22 @@ class Server:
     @classmethod
     def status(cls):
         """Check server status."""
-        pid_file = BASE_DIR / 'imgsearch.pid'
+        pid_file = BASE_DIR / 'isearch.pid'
         if not pid_file.exists():
-            print_err('ImgSearch service is not running')
+            print_err('iSearch service is not running')
             return False
 
         try:
             pid = int(pid_file.read_text().strip())
             if cls.is_running(pid):
-                print(f'ImgSearch service is running (PID: {pid})')
+                print(colorize('iSearch service is running', 'blue', bold=True))
+                print(f'  {bold("PID")}: {pid}')
+                try:
+                    memory_info = psutil.Process(pid).memory_info()
+                    memory_mb = memory_info.rss / 1024 / 1024
+                    print(f'  {bold("MEM")}: {memory_mb:.1f} MB')
+                except Exception as e:
+                    print_err(f'  {bold("MEM")}: unknown ({e})')
                 return True
             else:
                 print_err('PID file exists but process is not running')

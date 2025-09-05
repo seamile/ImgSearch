@@ -1,6 +1,8 @@
 import os
 import sys
+from argparse import ArgumentDefaultsHelpFormatter as DefaultHelper
 from argparse import ArgumentParser
+from argparse import _SubParsersAction as SubParsers
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
@@ -11,7 +13,7 @@ from PIL import Image
 
 from imgsearch import __version__
 from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from imgsearch.utils import find_all_images, img2bytes, is_image, open_images, print_err, print_warn
+from imgsearch.utils import bold, colorize, find_all_images, img2bytes, is_image, open_images, print_err
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
 
@@ -32,7 +34,7 @@ class Client:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not UNIX_SOCKET.exists():
             print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-            print_err('You can start the service with: isearch -s start')
+            print_err('You can start the service with: isearch service start')
             sys.exit(1)
 
         try:
@@ -45,7 +47,7 @@ class Client:
             return service
         except Pyro5.errors.CommunicationError:
             print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-            print_err('Is the imgsearch service running? Check with: isearch -s status')
+            print_err('Is the imgsearch service running? Check with: isearch service status')
             sys.exit(1)
         except Exception as e:
             print_err(f'An unexpected error occurred while connecting to the service: {e}')
@@ -122,9 +124,9 @@ class Client:
 
         return n_images
 
-    def search(self, query: str, num: int = 10, similarity: float = 0.0):
+    def search(self, target: str, num: int = 10, similarity: int = 0):
         """Handle search operations."""
-        query_path = Path(query)
+        query_path = Path(target)
         try:
             results: list | None
             service = self.connect_to_service()
@@ -135,7 +137,7 @@ class Client:
                 results = service.handle_search(img_bytes, k=num, similarity=similarity, db_name=self.db_name)
             else:
                 # Text search
-                results = service.handle_search(str(query), k=num, similarity=similarity, db_name=self.db_name)
+                results = service.handle_search(str(target), k=num, similarity=similarity, db_name=self.db_name)
             return results
         except Exception as e:
             print_err(f'Failed to search: {e} ({e.__class__.__name__})')
@@ -171,55 +173,74 @@ class Client:
             return 0
 
 
+def shortcut_search(parser: ArgumentParser) -> set[str]:
+    """Insert search shortcut command if not provided"""
+    options: set[str] = set()
+    # get options
+    for a in parser._actions:
+        if isinstance(a, SubParsers):
+            options.update(a.choices.keys())
+        else:
+            options.update(a.option_strings)
+
+    # insert search command
+    if len(sys.argv) > 1 and not set(sys.argv[1:]) & options:
+        sys.argv.insert(1, 'search')
+
+    return options
+
+
 def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
-    parser = ArgumentParser(prog='imgsearch', description='ImgSearch - A local image search engine.')
+    common = ArgumentParser(add_help=False)
+    common.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help='Database name')
 
-    # Main commands
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('query', nargs='?', help='Search query (image path or keyword)')
-    group.add_argument('-a', dest='add', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
-    group.add_argument('-i', dest='info', action='store_true', help='Show database information')
-    group.add_argument('-C', dest='clear', action='store_true', help='Clear the entire database')
-    group.add_argument('-c', dest='compare', nargs=2, metavar='IMG_PATH', help='Compare similarity of two images')
+    parser = ArgumentParser(prog='isearch', description=bold('Lightweight Image Search Engine'))
 
-    # Service management commands
-    srv_cmds = ['start', 'stop', 'status']
-    group.add_argument('-s', dest='service', choices=srv_cmds, help='Manage the imgsearch service')
+    # Create subparsers for subcommands
+    subcmd = parser.add_subparsers(dest='command')
 
-    # Optional arguments
-    parser.add_argument(
-        '--base',
-        dest='base_dir',
-        type=Path,
-        default=BASE_DIR,
-        help=f'Database base directory path (default: {BASE_DIR})',
+    # Search Image
+    cmd_search = subcmd.add_parser('search', parents=[common], help=f'Search images {bold("(default)")}')
+    cmd_search.add_argument(
+        '-n', dest='num', type=int, default=10, help='Number of search results (default: %(default)s)'
     )
-    parser.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help=f'Database name (default: {DB_NAME})')
-    parser.add_argument('-n', dest='num', type=int, default=10, help='Number of search results (default: 10)')
-    parser.add_argument('-m', dest='model', type=str, help='CLIP model name for the service to use')
-    parser.add_argument(
-        '-l',
-        dest='label',
-        choices=['path', 'name'],
-        default='path',
-        help='Label naming method: "path" for absolute path, "name" for filename without extension (default: path)',
+    cmd_search.add_argument('-o', dest='open_res', action='store_true', help='Open the searched images')
+    cmd_search.add_argument(
+        '-m',
+        dest='min_similarity',
+        type=int,
+        default=0,
+        help='Min similarity threshold, 0 - 100 (default: %(default)s)',
     )
-    parser.add_argument(
-        '-o',
-        dest='open_results',
-        action='store_true',
-        help='Open search results with system default image viewer',
-    )
-    parser.add_argument(
-        '--similarity',
-        dest='similarity',
-        type=float,
-        default=0.0,
-        help='Minimum similarity threshold (0-100, default: 0.0)',
-    )
+    cmd_search.add_argument('target', nargs='?', help='Search target (image path or keyword)')
 
-    group.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
+    # Service management subcommand
+    cmd_service = subcmd.add_parser('service', help='Manage the imgsearch service', formatter_class=DefaultHelper)
+    cmd_service.add_argument('-b', dest='base_dir', type=Path, default=BASE_DIR, help='Database base directory path')
+    cmd_service.add_argument('-m', dest='model', type=str, help='CLIP model name for the service to use')
+    cmd_service.add_argument('action', choices=['start', 'stop', 'status', 'setup'], help='Service action to perform')
+
+    # Add subcommand
+    cmd_add = subcmd.add_parser('add', parents=[common], help='Add images to database', formatter_class=DefaultHelper)
+    cmd_add.add_argument(
+        '-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method: path | name'
+    )
+    cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
+
+    # Database management subcommand
+    cmd_db = subcmd.add_parser('db', parents=[common], help='Database management operations')
+    db_action = cmd_db.add_subparsers(dest='db_action')
+    db_action.add_parser('info', help='Show database information')  # Info subcommand
+    db_action.add_parser('clear', help='Clear the entire database')  # Clear subcommand
+
+    # Compare subcommand
+    cmd_cmp = subcmd.add_parser('cmp', help='Compare similarity of two images', formatter_class=DefaultHelper)
+    cmd_cmp.add_argument('path1', metavar='IMG_PATH1', help='First image path')
+    cmd_cmp.add_argument('path2', metavar='IMG_PATH2', help='Second image path')
+
+    # Version
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
 
     return parser
 
@@ -227,56 +248,61 @@ def create_parser() -> ArgumentParser:
 def main() -> None:  # noqa: C901
     """Main function for command line interface"""
     parser = create_parser()
+    shortcut_search(parser)
     args = parser.parse_args()
 
-    client = Client(db_name=args.db_name)
+    # Handle service subcommand
+    if args.command == 'service':
+        client = Client()
+        client.handle_service_command(args.action, base_dir=args.base_dir, model_name=args.model or DEFAULT_MODEL)
 
-    # Handle primary commands
-    if args.service:
-        client.handle_service_command(args.service, base_dir=args.base_dir, model_name=args.model or DEFAULT_MODEL)
-
-    elif args.add:
-        n_added = client.add_images(args.add, args.label)
+    elif args.command == 'add':
+        client = Client(db_name=args.db_name)
+        n_added = client.add_images(args.paths, args.label)
         print(f'Added {n_added} images for processing')
 
-    elif args.query:
+    elif args.command == 'cmp':
+        client = Client()
+        similarity = client.compare_images(args.path1, args.path2)
+        print(f'Similarity between images: {similarity}%')
+
+    elif args.command == 'db':
+        client = Client(db_name=args.db_name)
+        if args.db_action == 'info':
+            if info := client.get_db_info():
+                print(f'Database "{args.db_name}":')
+                for key, value in info.items():
+                    print(f'  - {key.title().replace("_", "")}: {value}')
+            else:
+                print_err(f'Failed to get database info for "{args.db_name}".')
+        elif args.db_action == 'clear':
+            notice = colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
+            if input(notice).lower() == 'y':
+                if client.clear_db():
+                    print(f'Database "{args.db_name}" has been cleared.')
+                else:
+                    print_err(f'Failed to clear the database "{args.db_name}".')
+
+    elif args.command == 'search':
+        client = Client(db_name=args.db_name)
         # Validate similarity parameter
-        if not 0.0 <= args.similarity <= 100.0:
-            print_err('Error: similarity must be between 0 and 100')
+        if not 0.0 <= args.min_similarity <= 100.0:
+            print_err('Error: min_similarity must be between 0 and 100')
             sys.exit(1)
 
-        print(f'Searching {args.query}...')
-        results = client.search(args.query, args.num, args.similarity)
+        print(f'Searching {args.target}...')
+        results = client.search(args.target, args.num, args.min_similarity)
         if results:
-            print(f'Found {len(results)} similar results (similarity ≥ {args.similarity}%):')
+            print(f'Found {len(results)} similar results (similarity ≥ {args.min_similarity}%):')
             for i, (path, similarity) in enumerate(results, 1):
                 print(f'{i:2d}. {path}  {similarity}%')
 
-            if args.open_results:
+            if args.open_res:
                 open_images([path for path, _ in results])
         elif results is None:
             print('Search queue is full, please try again later.')
         else:
             print('No similar images found.')
-
-    elif args.info:
-        if info := client.get_db_info():
-            print(f'Database "{args.db_name}":')
-            for key, value in info.items():
-                print(f'  - {key.title().replace("_", "")}: {value}')
-
-    elif args.clear:
-        if input(f'Are you sure to clear the database "{args.db_name}" ? [y/N]: ').lower() == 'y':
-            if client.clear_db():
-                print_warn(f'Database "{args.db_name}" has been cleared.')
-            else:
-                print_err(f'Failed to clear the database "{args.db_name}".')
-        else:
-            print_warn('Operation cancelled.')
-
-    elif args.compare:
-        similarity = client.compare_images(args.compare[0], args.compare[1])
-        print(f'Similarity between images: {similarity}%')
 
     else:
         parser.print_help()

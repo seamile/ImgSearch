@@ -28,6 +28,7 @@ dependencies = [
     "hnswlib>=0.8.0",
     "msgpack>=1.1.1",
     "pillow>=11.3.0",
+    "psutil>=7.0.0",
     "pyro5>=5.15",
     "transformers>=4.56.0",
 ]

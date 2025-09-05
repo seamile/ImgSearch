@@ -7,33 +7,52 @@ from io import BytesIO
 from itertools import islice
 from pathlib import Path
 
-from imgsearch.consts import BASE_DIR
 from PIL import Image
 
-# 定义颜色
-RED = '\x1b[31m'  # 红色
-GREEN = '\x1b[32m'  # 绿色
-YELLOW = '\x1b[33m'  # 黄色
-BLUE = '\x1b[34m'  # 蓝色
-MAGENTA = '\x1b[35m'  # 品红
-CYAN = '\x1b[36m'  # 青色
-WHITE = '\x1b[37m'  # 白色
-GRAY = '\x1b[90m'  # 灰色
-END = '\x1b[0m'
+from imgsearch.consts import BASE_DIR
 
 EXTENSIONS = Image.registered_extensions().keys()
 
 Feature = list[float]
 
 
+def colorize(text: str, color: str = '', bold=False) -> str:
+    """Colorize text"""
+    b = '1' if bold else '0'
+    match color.lower():
+        case 'red':
+            return f'\x1b[{b};31m{text}\x1b[0m'
+        case 'green':
+            return f'\x1b[{b};32m{text}\x1b[0m'
+        case 'yellow':
+            return f'\x1b[{b};33m{text}\x1b[0m'
+        case 'blue':
+            return f'\x1b[{b};34m{text}\x1b[0m'
+        case 'magenta':
+            return f'\x1b[{b};35m{text}\x1b[0m'
+        case 'cyan':
+            return f'\x1b[{b};36m{text}\x1b[0m'
+        case 'white':
+            return f'\x1b[{b};37m{text}\x1b[0m'
+        case 'gray':
+            return f'\x1b[{b};90m{text}\x1b[0m'
+        case _:
+            return f'\x1b[{b}m{text}\x1b[0m'
+
+
+def bold(text: str) -> str:
+    """Bold text"""
+    return colorize(text, '', True)
+
+
 def print_warn(msg):
     """Output warning message to stderr"""
-    print(f'{YELLOW}{msg}{END}', file=sys.stderr)
+    print(colorize(msg, 'yellow'), file=sys.stderr)
 
 
 def print_err(msg):
     """Output error message to stderr"""
-    print(f'{RED}{msg}{END}', file=sys.stderr)
+    print(colorize(msg, 'red'), file=sys.stderr)
 
 
 def is_image(path: Path, ignore_hidden=True) -> bool:
@@ -92,19 +111,14 @@ class ColorFormatter(logging.Formatter):
 
     @staticmethod
     def colorize(level: str, message: str) -> str:
-        match level:
-            case 'DEBUG':
-                return f'{GRAY}{message}{END}'
-            case 'INFO':
-                return f'{BLUE}{message}{END}'
-            case 'WARNING':
-                return f'{YELLOW}{message}{END}'
-            case 'ERROR':
-                return f'{RED}{message}{END}'
-            case 'CRITICAL':
-                return f'{RED}{message}{END}'
-            case _:
-                return message
+        colors = {
+            'DEBUG': 'gray',
+            'INFO': 'blue',
+            'WARNING': 'yellow',
+            'ERROR': 'red',
+            'CRITICAL': 'red',
+        }
+        return colorize(message, colors.get(level.upper(), ''))
 
     def format(self, record: logging.LogRecord) -> str:
         message = super().format(record)
@@ -126,7 +140,7 @@ def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
     else:
         # Background: use file handler
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / 'imgsearch.log'
+        log_file = log_dir / 'isearch.log'
         handler = logging.FileHandler(log_file)
         handler.setLevel(level)
     formatter = ColorFormatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
