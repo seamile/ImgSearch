@@ -13,7 +13,7 @@ from PIL import Image
 
 from imgsearch import __version__
 from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from imgsearch.utils import bold, colorize, find_all_images, img2bytes, is_image, open_images, print_err
+from imgsearch.utils import bold, colorize, find_all_images, img2bytes, is_image, open_images, print_err, print_warn
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
 
@@ -143,6 +143,15 @@ class Client:
             print_err(f'Failed to search: {e} ({e.__class__.__name__})')
             return None
 
+    def list_dbs(self) -> list[str]:
+        """Handle database list request."""
+        try:
+            service = self.connect_to_service()
+            return service.handle_list_dbs()  # type: ignore
+        except Exception as e:
+            print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
+            return []
+
     def get_db_info(self) -> dict:
         """Handle database info request."""
         try:
@@ -224,15 +233,16 @@ def create_parser() -> ArgumentParser:
     # Add subcommand
     cmd_add = subcmd.add_parser('add', parents=[common], help='Add images to database', formatter_class=DefaultHelper)
     cmd_add.add_argument(
-        '-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method: path | name'
+        '-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method: path, name'
     )
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
     cmd_db = subcmd.add_parser('db', parents=[common], help='Database management operations')
-    db_action = cmd_db.add_subparsers(dest='db_action')
-    db_action.add_parser('info', help='Show database information')  # Info subcommand
-    db_action.add_parser('clear', help='Clear the entire database')  # Clear subcommand
+    db_group = cmd_db.add_mutually_exclusive_group(required=True)
+    db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
+    db_group.add_argument('-c', '--clear', action='store_true', help='Clear the entire database')
+    db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
 
     # Compare subcommand
     cmd_cmp = subcmd.add_parser('cmp', help='Compare similarity of two images', formatter_class=DefaultHelper)
@@ -268,14 +278,21 @@ def main() -> None:  # noqa: C901
 
     elif args.command == 'db':
         client = Client(db_name=args.db_name)
-        if args.db_action == 'info':
+        if args.list:
+            if databases := client.list_dbs():
+                print(colorize('Available databases:', 'blue', True))
+                for db_name in databases:
+                    print(f'  - {db_name}')
+            else:
+                print_warn('No databases found.')
+        elif args.info:
             if info := client.get_db_info():
-                print(f'Database "{args.db_name}":')
+                print(colorize(f'Database "{args.db_name}"', 'blue', True))
                 for key, value in info.items():
-                    print(f'  - {key.title().replace("_", "")}: {value}')
+                    print(f'  - {bold(key.title().replace("_", ""))}: {value}')
             else:
                 print_err(f'Failed to get database info for "{args.db_name}".')
-        elif args.db_action == 'clear':
+        elif args.clear:
             notice = colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
                 if client.clear_db():

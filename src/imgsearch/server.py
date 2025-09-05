@@ -11,7 +11,7 @@ import psutil
 import Pyro5.server
 from PIL import Image
 
-from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
+from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, IDX_NAME, MAP_NAME, SERVICE_NAME, UNIX_SOCKET
 from imgsearch.storage import VectorDB
 from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
 
@@ -194,6 +194,31 @@ class RPCService:
         finally:
             self.search_semaphore.release()
 
+    def handle_list_dbs(self) -> list[str]:
+        """
+        List all available database names.
+
+        Returns:
+            List of database names found in the base directory
+        """
+        databases: list[str] = []
+        try:
+            if not self.base_dir.exists():
+                return databases
+
+            for item in self.base_dir.iterdir():
+                if item.is_dir():
+                    # Check if directory contains both index and mapping files
+                    idx_file = item / IDX_NAME
+                    map_file = item / MAP_NAME
+                    if idx_file.exists() and map_file.exists():
+                        databases.append(item.name)
+
+        except Exception as e:
+            logger.error(f'Failed to list databases: {e}')
+
+        return sorted(databases)
+
     def handle_get_db_info(self, db_name: str = DB_NAME) -> dict:
         """
         Get database information.
@@ -207,7 +232,6 @@ class RPCService:
         db = self._get_db(db_name)
         return {
             'base': str(db.base.resolve()),
-            'name': db_name,
             'size': db.size,
             'capacity': db.capacity,
         }
@@ -223,11 +247,15 @@ class RPCService:
             True if successful, False otherwise
         """
         logger.warning(f'[Clear] Clear database: {db_name}')
-        db = self._get_db(db_name)
-        with self._lock:
-            db.clear()
-            logger.debug(f'Database {db_name} cleared')
-            return True
+        try:
+            db = self._get_db(db_name)
+            with self._lock:
+                db.clear()
+                logger.debug(f'Database {db_name} cleared')
+                return True
+        except Exception as e:
+            logger.error(f'Failed to clear database: {e}')
+            return False
 
     def handle_compare_images(self, path1: str, path2: str) -> float:
         """
