@@ -1,7 +1,8 @@
 from pathlib import Path
 
 # The default model to use.
-DEFAULT_MODEL = 'wkcn/TinyCLIP-ViT-61M-32-Text-29M-LAION400M'
+DEFAULT_MODEL = 'TinyCLIP-auto-ViT-45M-32-Text-18M'
+PRETRAINED = 'LAIONYFCC400M'
 BATCH_SIZE = 50
 
 # The paths for the database files.

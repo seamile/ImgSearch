@@ -21,22 +21,27 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "numpy>=1.26.0",        # dependi: disable-check
-    "torch>=2.2.0",         # dependi: disable-check
-    "torchvision>=0.17.0",  # dependi: disable-check
     "bidict>=0.23.1",
     "hnswlib>=0.8.0",
     "msgpack>=1.1.1",
     "pillow>=11.3.0",
     "psutil>=7.0.0",
     "pyro5>=5.15",
-    "transformers>=4.56.0",
+    "transformers>=4.56.1",
+    # NumPy with version constraints
+    "numpy<2; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "numpy>=1.24.0; sys_platform!='darwin' or platform_machine!='x86_64'",
+    # PyTorch dependencies with platform-specific versions
+    "torch==2.2.2; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "torch>=2.8.0; sys_platform!='darwin' or platform_machine!='x86_64'",
+    "torchvision>=0.17.2",  # dependi: disable-check
+    "open-clip-torch @ git+https://github.com/wkcn/TinyCLIP.git@main",
 ]
 
 [dependency-groups]
 dev = [
     "ipython>=9.5.0",
-    "pytest>=8.4.1",
+    "pytest>=8.4.2",
 ]
 
 [project.scripts]

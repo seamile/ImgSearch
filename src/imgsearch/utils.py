@@ -1,4 +1,5 @@
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -53,6 +54,11 @@ def print_warn(msg):
 def print_err(msg):
     """Output error message to stderr"""
     print(colorize(msg, 'red'), file=sys.stderr)
+
+
+def cpu_count() -> int:
+    """Return the number of CPUs"""
+    return os.cpu_count() or 1
 
 
 def is_image(path: Path, ignore_hidden=True) -> bool:

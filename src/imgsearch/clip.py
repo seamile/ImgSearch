@@ -1,13 +1,13 @@
 import logging
-import os
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
+from open_clip import create_model_and_transforms, get_tokenizer
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
 
-from imgsearch.consts import DEFAULT_MODEL
-from imgsearch.utils import Feature
+from imgsearch.consts import DEFAULT_MODEL, PRETRAINED
+from imgsearch.utils import Feature, cpu_count
 
 # Disable transformers warnings
 for name, logger in logging.Logger.manager.loggerDict.items():
@@ -19,15 +19,32 @@ class Clip:
     """CLIP model wrapper"""
 
     def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None) -> None:
-        torch.set_num_threads(os.cpu_count() or 1)
         self.device = self.get_device(device)
-        self.model, self.processor = self.load_model(model_name)
+        self.model, self.processor, self.tokenizer = self.load_model(model_name)
         # Move model to device and ensure proper dtype
         self.model = self.model.to(self.device)  # type: ignore
+        self.model.eval()
+
+        if self.device.type == 'cpu':
+            # Set number of threads to avoid slowdown
+            torch.set_num_threads(max(cpu_count(), 2))
 
         # For MPS, ensure model is in float32
         if self.device.type == 'mps':
             self.model = self.model.float()
+
+        # Thread pool for concurrent preprocessing
+        self._executor: ThreadPoolExecutor | None = None
+
+    def __del__(self):
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+
+    @property
+    def executor(self) -> ThreadPoolExecutor:
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=max(cpu_count(), 2))
+        return self._executor
 
     @staticmethod
     def get_device(name: str | None = None) -> torch.device:
@@ -42,44 +59,53 @@ class Clip:
             return torch.device('cpu')
 
     @staticmethod
-    def load_model(model_name: str = DEFAULT_MODEL) -> tuple[CLIPModel, CLIPProcessor]:
+    def load_model(model_name: str = DEFAULT_MODEL, pretrained: str = PRETRAINED):
         """Load CLIP model and processor"""
-        model = CLIPModel.from_pretrained(model_name)
-        processor = CLIPProcessor.from_pretrained(model_name)
-        return model, processor
+        model, _, processor = create_model_and_transforms(model_name, pretrained=pretrained)
+        tokenizer = get_tokenizer(model_name)
+        return model, processor, tokenizer  # type: ignore
 
     def embed_images(self, images: list[Image.Image]) -> list[Feature]:
         """Embed a list of images to feature vectors"""
         if not images:
             return []
 
-        # Process images
-        inputs = self.processor(images=images, return_tensors='pt', padding=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Concurrent preprocessing for I/O bound operations
+        if len(images) > 1:
+            img_tensors = list(self.executor.map(self.processor, images))  # type: ignore
+        else:
+            img_tensors = [self.processor(images[0])]  # type: ignore
+
+        batch_tensor = torch.stack(img_tensors)  # type: ignore
 
         # Get image features
-        with torch.no_grad():
-            image_features = self.model.get_image_features(**inputs)
+        device_type, non_blocking = ('cuda', True) if self.device.type == 'cuda' else ('cpu', False)
+        with torch.no_grad(), torch.autocast(device_type=device_type):
+            img_features = self.model.encode_image(batch_tensor.to(self.device, non_blocking=non_blocking))  # type: ignore
             # Normalize features
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            img_features /= img_features.norm(dim=-1, keepdim=True)
 
-        return image_features.cpu().numpy().tolist()
+        return [f.cpu().numpy().tolist() for f in img_features]
 
     def embed_image(self, image: Image.Image) -> Feature:
         """Embed a single image to a feature vector"""
         return self.embed_images([image])[0]
 
-    def embed_text(self, text: str) -> Feature:
+    def embed_text(self, *text: str) -> Feature:
         """Embed a single text string to a feature vector"""
+        if not text:
+            return []
+
         # Process text
-        inputs = self.processor(text=[text], return_tensors='pt', padding=True, truncation=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        text_tensor = self.tokenizer(list(text))
 
         # Get text features
-        with torch.no_grad():
-            text_features = self.model.get_text_features(**inputs)
+        device_type, non_blocking = ('cuda', True) if self.device.type == 'cuda' else ('cpu', False)
+        with torch.no_grad(), torch.autocast(device_type=device_type):
+            text_tensor = text_tensor.to(self.device, non_blocking=non_blocking)
+            text_features = self.model.encode_text(text_tensor)  # type: ignore
             # Normalize features
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            text_features /= text_features.norm(dim=-1, keepdim=True)
 
         return text_features.cpu().numpy().tolist()[0]
 
