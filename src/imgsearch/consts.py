@@ -3,7 +3,7 @@ from pathlib import Path
 # The default model to use.
 DEFAULT_MODEL = 'TinyCLIP-auto-ViT-45M-32-Text-18M'
 PRETRAINED = 'LAIONYFCC400M'
-BATCH_SIZE = 50
+BATCH_SIZE = 100
 
 # The paths for the database files.
 BASE_DIR = Path.home() / '.isearch'

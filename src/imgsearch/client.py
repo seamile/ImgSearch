@@ -3,10 +3,9 @@ import sys
 from argparse import ArgumentDefaultsHelpFormatter as DefaultHelper
 from argparse import ArgumentParser
 from argparse import _SubParsersAction as SubParsers
-from functools import cached_property
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Thread
+from threading import Thread, local
 
 import Pyro5.api
 import Pyro5.errors
@@ -17,6 +16,7 @@ from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVI
 from imgsearch.utils import bold, colorize, find_all_images, img2bytes, is_image, open_images, print_err, print_warn
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
+_thread_local = local()
 
 
 class Client:
@@ -31,29 +31,29 @@ class Client:
         """Initialize the imgsearch client."""
         self.db_name = db_name
 
-    @cached_property
+    @property
     def service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
-        if not UNIX_SOCKET.exists():
-            print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-            print_err('You can start the service with: isearch service start')
-            sys.exit(1)
+        if not hasattr(_thread_local, 'service'):
+            if not UNIX_SOCKET.exists():
+                print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
+                print_err('You can start the service with: isearch service start')
+                sys.exit(1)
 
-        try:
-            # Configure Pyro5 to use msgpack serializer
-            Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
-
-            uri = f'PYRO:{SERVICE_NAME}@./u:{UNIX_SOCKET}'
-            service = Pyro5.api.Proxy(uri)
-            service._pyroBind()  # A quick check to see if the server is responsive
-            return service
-        except Pyro5.errors.CommunicationError:
-            print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-            print_err('Is the imgsearch service running? Check with: isearch service status')
-            sys.exit(1)
-        except Exception as e:
-            print_err(f'An unexpected error occurred while connecting to the service: {e}')
-            sys.exit(1)
+            try:
+                # Configure Pyro5 to use msgpack serializer
+                Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
+                uri = f'PYRO:{SERVICE_NAME}@./u:{UNIX_SOCKET}'
+                _thread_local.service = Pyro5.api.Proxy(uri)
+                _thread_local.service._pyroBind()  # A quick check to see if the server is responsive
+            except Pyro5.errors.CommunicationError:
+                print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
+                print_err('Is the imgsearch service running? Check with: isearch service status')
+                sys.exit(1)
+            except Exception as e:
+                print_err(f'An unexpected error occurred while connecting to the service: {e}')
+                sys.exit(1)
+        return _thread_local.service
 
     def handle_service_command(
         self, service_cmd: str, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL
@@ -70,6 +70,10 @@ class Client:
             case 'status':
                 Server.status()
 
+    def _generate_label(self, img_path: Path, label_type: str) -> str:
+        """Generate label for image based on label_type."""
+        return img_path.stem if label_type == 'name' else str(img_path.resolve())
+
     def _preprocess_image(self, task_q: Queue, label_type: str) -> None:
         """Static method to preprocess images from queue."""
         images_dict = {}
@@ -78,9 +82,7 @@ class Client:
                 img_path = task_q.get(block=False)
 
                 # convert image to bytes
-                img_label = img_path.stem if label_type == 'name' else str(img_path.resolve())
-                if self.service.exists_in_db(img_label, self.db_name):
-                    continue
+                img_label = self._generate_label(img_path, label_type)
                 img = Image.open(img_path)
                 images_dict[img_label] = img2bytes(img, 384)
 
@@ -98,17 +100,54 @@ class Client:
                 self.service.handle_add_images(images_dict, self.db_name)
                 images_dict = {}
 
+    def _process_image_batch(self, batch_paths: list[Path], batch_labels: list[str], task_q: Queue) -> int:
+        """Process a batch of images: check existence and add non-existing to queue."""
+        exists_flags = self.service.handle_exists_in_db(batch_labels, self.db_name)
+        if exists_flags is not None:
+            count = 0
+            for path, exists in zip(batch_paths, exists_flags, strict=False):
+                if not exists:
+                    task_q.put(path)
+                    count += 1
+            return count
+        else:
+            print_warn('Failed to check batch existence, adding all to queue')
+            for path in batch_paths:
+                task_q.put(path)
+            return len(batch_paths)
+
+    def _filter_non_existing_images(self, paths: list[str], label_type: str, task_q: Queue) -> int:
+        """Filter non-existing images and add to task queue."""
+        batch_size_check = BATCH_SIZE * 5
+        n_images = 0
+        batch_paths = []
+        batch_labels = []
+
+        print('Collecting and checking images...')
+        for img_path in find_all_images(paths):
+            img_label = self._generate_label(img_path, label_type)
+            batch_paths.append(img_path)
+            batch_labels.append(img_label)
+
+            if len(batch_paths) >= batch_size_check:
+                n_images += self._process_image_batch(batch_paths, batch_labels, task_q)
+                batch_paths = []
+                batch_labels = []
+
+        # Process remaining batch
+        if batch_paths:
+            n_images += self._process_image_batch(batch_paths, batch_labels, task_q)
+
+        print(f'Found {n_images} new images to process')
+        return n_images
+
     def add_images(self, paths: list[str], label_type: str = 'path') -> int:
         """Handle adding images to the index using queue-based thread pool."""
         # Create queues
         task_q: Queue[Path] = Queue()
 
-        # Find all images and add their paths to input queue
-        print('Collecting images...')
-        n_images = 0
-        for img_path in find_all_images(paths):
-            task_q.put(img_path)
-            n_images += 1
+        # Filter non-existing images and add to queue
+        n_images = self._filter_non_existing_images(paths, label_type, task_q)
 
         # Create fixed number of worker threads
         print('Preprocessing images...')
