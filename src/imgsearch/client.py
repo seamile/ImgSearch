@@ -3,6 +3,7 @@ import sys
 from argparse import ArgumentDefaultsHelpFormatter as DefaultHelper
 from argparse import ArgumentParser
 from argparse import _SubParsersAction as SubParsers
+from functools import cached_property
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
@@ -30,7 +31,8 @@ class Client:
         """Initialize the imgsearch client."""
         self.db_name = db_name
 
-    def connect_to_service(self) -> Pyro5.api.Proxy:
+    @cached_property
+    def service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not UNIX_SOCKET.exists():
             print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
@@ -71,22 +73,21 @@ class Client:
     def _preprocess_image(self, task_q: Queue, label_type: str) -> None:
         """Static method to preprocess images from queue."""
         images_dict = {}
-        service = self.connect_to_service()
         try:
             while not task_q.empty():
                 img_path = task_q.get(block=False)
 
                 # convert image to bytes
                 img_label = img_path.stem if label_type == 'name' else str(img_path.resolve())
-                img = Image.open(img_path)
-                if service.exists_in_db(img_label, self.db_name):
+                if self.service.exists_in_db(img_label, self.db_name):
                     continue
-                images_dict[img_label] = img2bytes(img, 480)
+                img = Image.open(img_path)
+                images_dict[img_label] = img2bytes(img, 384)
 
                 # send img_bytes to server for processing
                 if len(images_dict) >= BATCH_SIZE:
                     print(f'Sending {len(images_dict)} images to the server...')
-                    service.handle_add_images(images_dict, self.db_name)
+                    self.service.handle_add_images(images_dict, self.db_name)
                     images_dict = {}
         except Exception as e:
             if not isinstance(e, Empty):
@@ -94,7 +95,7 @@ class Client:
         finally:
             if images_dict:
                 print(f'Sending {len(images_dict)} images to the server...')
-                service.handle_add_images(images_dict, self.db_name)
+                self.service.handle_add_images(images_dict, self.db_name)
                 images_dict = {}
 
     def add_images(self, paths: list[str], label_type: str = 'path') -> int:
@@ -129,15 +130,14 @@ class Client:
         query_path = Path(target)
         try:
             results: list | None
-            service = self.connect_to_service()
             if query_path.is_file() and is_image(query_path):
                 # Image search
                 img = Image.open(query_path)
                 img_bytes = img2bytes(img, 480)
-                results = service.handle_search(img_bytes, k=num, similarity=similarity, db_name=self.db_name)
+                results = self.service.handle_search(img_bytes, k=num, similarity=similarity, db_name=self.db_name)
             else:
                 # Text search
-                results = service.handle_search(str(target), k=num, similarity=similarity, db_name=self.db_name)
+                results = self.service.handle_search(str(target), k=num, similarity=similarity, db_name=self.db_name)
             return results
         except Exception as e:
             print_err(f'Failed to search: {e} ({e.__class__.__name__})')
@@ -146,8 +146,7 @@ class Client:
     def list_dbs(self) -> list[str]:
         """Handle database list request."""
         try:
-            service = self.connect_to_service()
-            return service.handle_list_dbs()  # type: ignore
+            return self.service.handle_list_dbs()  # type: ignore
         except Exception as e:
             print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
             return []
@@ -155,8 +154,7 @@ class Client:
     def get_db_info(self) -> dict:
         """Handle database info request."""
         try:
-            service = self.connect_to_service()
-            return service.handle_get_db_info(self.db_name)  # type: ignore
+            return self.service.handle_get_db_info(self.db_name)  # type: ignore
         except Exception as e:
             print_err(f'Failed to get database info: {e} ({e.__class__.__name__})')
             return {}
@@ -164,8 +162,7 @@ class Client:
     def clear_db(self) -> bool:
         """Handle database clear request."""
         try:
-            service = self.connect_to_service()
-            return service.handle_clear_db(self.db_name)  # type: ignore
+            return self.service.handle_clear_db(self.db_name)  # type: ignore
         except Exception as e:
             print_err(f'Failed to clear database: {e} ({e.__class__.__name__})')
             return False
@@ -175,8 +172,7 @@ class Client:
         try:
             abs_path1 = str(Path(path1).resolve())
             abs_path2 = str(Path(path2).resolve())
-            service = self.connect_to_service()
-            return service.handle_compare_images(abs_path1, abs_path2)  # type: ignore
+            return self.service.handle_compare_images(abs_path1, abs_path2)  # type: ignore
         except Exception as e:
             print_err(f'Failed to compare images: {e} ({e.__class__.__name__})')
             return 0

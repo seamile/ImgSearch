@@ -1,6 +1,6 @@
 import logging
 import platform
-import subprocess  # noqa: S404
+import subprocess
 import sys
 from collections.abc import Sequence
 from io import BytesIO
@@ -156,10 +156,10 @@ def open_images(paths: Sequence[str | Path]):
     system = platform.system()
     try:
         if system == 'Windows':
-            subprocess.run(['explorer', *paths])  # type: ignore  # noqa: S603, S607
-        elif system == 'Darwin':  # macOS
-            subprocess.run(['open', *paths])  # type: ignore  # noqa: S603, S607
-        else:  # Linux
-            subprocess.run(['xdg-open', *paths])  # type: ignore  # noqa: S603, S607
+            subprocess.run(['explorer', *paths])
+        elif system == 'Darwin':
+            subprocess.run(['open', *paths])
+        else:
+            subprocess.run(['xdg-open', *paths])
     except Exception as e:
         print_err(f'Failed to open images: {e}')

@@ -66,6 +66,11 @@ class RPCService:
         db = self._get_db(db_name)
         return db.has_label(label)
 
+    def handle_exists_in_db(self, labels: list[str], db_name: str = DB_NAME) -> list[bool]:
+        """Check if multiple labels exist in the database"""
+        db = self._get_db(db_name)
+        return db.has_labels(*labels)
+
     def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
         logger.debug(f'Processing batch of {len(images)} images ({db_name})')

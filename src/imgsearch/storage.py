@@ -1,5 +1,5 @@
 from pathlib import Path
-from pickle import HIGHEST_PROTOCOL, dump, load  # noqa: S403
+from pickle import HIGHEST_PROTOCOL, dump, load
 
 from bidict import bidict
 from hnswlib import Index
@@ -45,6 +45,10 @@ class VectorDB:
     def has_label(self, label: str) -> bool:
         """Check if label exists in index"""
         return label in self.mapping.inv
+
+    def has_labels(self, *labels: str) -> list[bool]:
+        """Check if labels exists in index"""
+        return [label in self.mapping.inv for label in labels]
 
     @staticmethod
     def new_index(init=True) -> Index:
