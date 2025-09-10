@@ -3,6 +3,7 @@ import os
 import signal
 import threading
 from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 from queue import Full, Queue
 from typing import Any
@@ -15,6 +16,7 @@ from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, IDX_N
 from imgsearch.storage import VectorDB
 from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
 
+Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +49,7 @@ class RPCService:
         self._lock = threading.Lock()
 
         # Async processing queue - now includes db_name
-        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=BATCH_SIZE * 5)
+        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=BATCH_SIZE * 3)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
@@ -61,12 +63,7 @@ class RPCService:
             self.databases[db_name] = VectorDB(db_name, self.base_dir)
         return self.databases[db_name]
 
-    def exists_in_db(self, label: str, db_name: str = DB_NAME):
-        """Check if a label exists in the database"""
-        db = self._get_db(db_name)
-        return db.has_label(label)
-
-    def handle_exists_in_db(self, labels: list[str], db_name: str = DB_NAME) -> list[bool]:
+    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = DB_NAME) -> list[bool]:
         """Check if multiple labels exist in the database"""
         db = self._get_db(db_name)
         return db.has_labels(*labels)

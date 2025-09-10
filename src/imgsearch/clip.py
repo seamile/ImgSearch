@@ -70,6 +70,11 @@ class Clip:
         if not images:
             return []
 
+        # make sure all images are RGB mode
+        for i, img in enumerate(images):
+            if img.mode != 'RGB':
+                images[i] = img.convert('RGB')
+
         # Concurrent preprocessing for I/O bound operations
         if len(images) > 1:
             img_tensors = list(self.executor.map(self.processor, images))  # type: ignore
