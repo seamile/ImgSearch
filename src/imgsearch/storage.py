@@ -5,7 +5,7 @@ from bidict import bidict
 from hnswlib import Index
 
 from imgsearch.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
-from imgsearch.utils import Feature
+from imgsearch.utils import Feature, ibatch
 
 Mapping = bidict[int, str]
 
@@ -51,10 +51,10 @@ class VectorDB:
         return [label in self.mapping.inv for label in labels]
 
     @staticmethod
-    def new_index(init=True) -> Index:
+    def new_index(init=True, max_elements: int = CAPACITY, ef: int = 400, max_conn: int = 32) -> Index:
         index = Index(space='cosine', dim=512)
         if init is True:
-            index.init_index(max_elements=CAPACITY, ef_construction=200, M=16, allow_replace_deleted=True)  # type: ignore
+            index.init_index(max_elements=max_elements, ef_construction=ef, M=max_conn, allow_replace_deleted=True)  # type: ignore
         return index
 
     @classmethod
@@ -136,9 +136,34 @@ class VectorDB:
         self.mapping = bidict()
         self.save()
 
+    def db_list(self) -> list[str]:
+        """List all available database names in base directory."""
+        if not self.base.exists():
+            return []
+
+        databases: list[str] = [
+            item.name
+            for item in self.base.iterdir()
+            if item.is_dir() and (item / IDX_NAME).is_file() and (item / MAP_NAME).is_file()
+        ]
+
+        return sorted(databases)
+
+    def rebuild_index(self, ef: int, max_conn: int):
+        """Rebuild index with new ef parameter"""
+        old_index = self.index
+        new_index = self.new_index(init=True, max_elements=self.capacity, ef=ef, max_conn=max_conn)
+        ids = old_index.get_ids_list()
+        if len(ids) > 0:
+            for batch_ids in ibatch(ids, batch_size=1000):
+                vectors_batch = old_index.get_items(batch_ids)
+                new_index.add_items(vectors_batch, batch_ids, replace_deleted=True)
+        self.index = new_index
+        self.save()
+
     def search(self, feature: Feature, k: int = 10, similarity: float = 0.0) -> list[tuple[str, float]]:
         """Search items by feature vector with similarity filtering"""
-        if self.index is None or self.size == 0:
+        if self.index is None or self.size == 0 or not feature:
             return []
 
         # Validate similarity parameter
@@ -147,11 +172,12 @@ class VectorDB:
 
         # If no similarity filtering, use original behavior
         if similarity == 0.0:
-            v_ids, distances = self.index.knn_query([feature], k=min(k, self.size))
+            search_k = min(k, self.size)
         else:
             # Dynamic search with similarity filtering
             search_k = min(k * 3, self.size)
-            v_ids, distances = self.index.knn_query([feature], k=search_k)
+        self.index.set_ef(max(search_k * 5, 100))
+        v_ids, distances = self.index.knn_query([feature], k=search_k)
 
         # Convert results to (path, similarity) tuples with filtering
         results = []
