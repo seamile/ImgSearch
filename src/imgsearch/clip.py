@@ -92,7 +92,8 @@ class Clip:
             # Normalize features
             img_features /= img_features.norm(dim=-1, keepdim=True)
 
-        return [f.cpu().numpy().tolist() for f in img_features]
+        img_features = img_features.cpu().float()
+        return [f.numpy().tolist() for f in img_features]
 
     def embed_image(self, image: Image.Image) -> Feature:
         """Embed a single image to a feature vector"""
@@ -114,7 +115,8 @@ class Clip:
             # Normalize features
             text_features /= text_features.norm(dim=-1, keepdim=True)
 
-        return text_features.cpu().numpy().tolist()[0]
+        text_features = text_features.cpu().float()
+        return text_features.numpy().tolist()[0]
 
     def compare_images(self, img1: Image.Image, img2: Image.Image) -> float:
         """Compare similarity between two images"""

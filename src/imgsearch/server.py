@@ -363,22 +363,22 @@ class Server:
             logger.error(f'Server failed to start: {e}')
         finally:
             self.cleanup()
+            logger.info('iSearch service stopped')
 
-    def handle_signal(self, signum, frame):
+    def handle_signal(self, signum, _):
         """Handle various signals."""
-        _ = frame  # Suppress unused parameter warnings
-
         if self._shutdown_requested:
             return
 
         match signum:
             case signal.SIGTERM | signal.SIGINT:
-                logger.debug(f'Received SIG-{signum}, shutting down gracefully...')
+                name = signal.Signals(signum).name
+                logger.warning(f'Received {name}, shutting down now...')
                 self._shutdown_requested = True
                 if self.daemon:
                     self.daemon.shutdown()
             case signal.SIGHUP:
-                logger.debug('Received SIGHUP, ignoring (restart not supported)')
+                logger.warning('Received SIGHUP, ignoring (restart not supported)')
 
     def stop(self):
         """Stop the running server."""
