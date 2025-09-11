@@ -1,21 +1,21 @@
-import os
 import sys
 from argparse import ArgumentDefaultsHelpFormatter as DefaultHelper
 from argparse import ArgumentParser
 from argparse import _SubParsersAction as SubParsers
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from queue import Empty, Queue
-from threading import Thread, local
+from threading import local
 
 import Pyro5.api
 import Pyro5.errors
 from PIL import Image
 
 from imgsearch import __version__
-from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, SERVICE_NAME, UNIX_SOCKET
-from imgsearch.utils import bold, colorize, find_all_images, img2bytes, is_image, open_images, print_err, print_warn
+from imgsearch import utils as ut
+from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL_KEY, MODELS, SERVICE_NAME, UNIX_SOCKET
 
-Image.MAX_IMAGE_PIXELS = 100_000_000
+Pyro5.config.COMPRESSION = True  # type: ignore
+Image.MAX_IMAGE_PIXELS = 900_000_000
 _thread_local = local()
 
 
@@ -36,8 +36,8 @@ class Client:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not hasattr(_thread_local, 'service'):
             if not UNIX_SOCKET.exists():
-                print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-                print_err('You can start the service with: isearch service start')
+                ut.print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
+                ut.print_err('You can start the service with: isearch service start')
                 sys.exit(1)
 
             try:
@@ -47,21 +47,24 @@ class Client:
                 _thread_local.service = Pyro5.api.Proxy(uri)
                 _thread_local.service._pyroBind()  # A quick check to see if the server is responsive
             except Pyro5.errors.CommunicationError:
-                print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-                print_err('Is the imgsearch service running? Check with: isearch service status')
+                ut.print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
+                ut.print_err('Is the imgsearch service running? Check with: isearch service status')
                 sys.exit(1)
             except Exception as e:
-                print_err(f'An unexpected error occurred while connecting to the service: {e}')
+                ut.print_err(f'An unexpected error occurred while connecting to the service: {e}')
                 sys.exit(1)
         return _thread_local.service
 
     def handle_service_command(
-        self, service_cmd: str, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL
+        self,
+        service_cmd: str,
+        base_dir: Path = BASE_DIR,
+        model_key: str = DEFAULT_MODEL_KEY,
     ) -> None:
         """Handle service management commands."""
         from .server import Server
 
-        server = Server(base_dir=base_dir, model_name=model_name)
+        server = Server(base_dir=base_dir, model_key=model_key)
         match service_cmd:
             case 'start':
                 server.run()
@@ -70,97 +73,64 @@ class Client:
             case 'status':
                 Server.status()
 
-    def _generate_label(self, img_path: Path, label_type: str) -> str:
-        """Generate label for image based on label_type."""
-        return img_path.stem if label_type == 'name' else str(img_path.resolve())
+    def _preprocess_images(self, batch: dict[str, str]) -> None:
+        """Process a batch of image paths."""
+        send_dict: dict[str, bytes] = {}
+        for label, path in batch.items():
+            try:
+                img = Image.open(path)
+                send_dict[label] = ut.img2bytes(img, 384)
+                if len(send_dict) >= BATCH_SIZE:
+                    print(f'Sending {len(send_dict)} images to the server...')
+                    self.service.handle_add_images(send_dict, self.db_name)
+                    send_dict = {}
+            except Exception as e:
+                ut.print_err(f'Failed to process image {path}: {e}')
 
-    def _preprocess_image(self, task_q: Queue, label_type: str) -> None:
-        """Static method to preprocess images from queue."""
-        images_dict = {}
-        try:
-            while not task_q.empty():
-                img_path = task_q.get(block=False)
+        if send_dict:
+            print(f'Sending {len(send_dict)} images to the server...')
+            self.service.handle_add_images(send_dict, self.db_name)
 
-                # convert image to bytes
-                img_label = self._generate_label(img_path, label_type)
-                img = Image.open(img_path)
-                images_dict[img_label] = img2bytes(img, 384)
-
-                # send img_bytes to server for processing
-                if len(images_dict) >= BATCH_SIZE:
-                    print(f'Sending {len(images_dict)} images to the server...')
-                    self.service.handle_add_images(images_dict, self.db_name)
-                    images_dict = {}
-        except Exception as e:
-            if not isinstance(e, Empty):
-                print_err(f'Failed to preprocess image: {e}')
-        finally:
-            if images_dict:
-                print(f'Sending {len(images_dict)} images to the server...')
-                self.service.handle_add_images(images_dict, self.db_name)
-                images_dict = {}
-
-    def _process_image_batch(self, batch_paths: list[Path], batch_labels: list[str], task_q: Queue) -> int:
-        """Process a batch of images: check existence and add non-existing to queue."""
-        exists_flags = self.service.handle_exists_in_db(batch_labels, self.db_name)
-        if exists_flags is not None:
-            count = 0
-            for path, exists in zip(batch_paths, exists_flags, strict=False):
-                if not exists:
-                    task_q.put(path)
-                    count += 1
-            return count
-        else:
-            print_warn('Failed to check batch existence, adding all to queue')
-            for path in batch_paths:
-                task_q.put(path)
-            return len(batch_paths)
-
-    def _filter_non_existing_images(self, paths: list[str], label_type: str, task_q: Queue) -> int:
-        """Filter non-existing images and add to task queue."""
-        batch_size_check = BATCH_SIZE * 5
-        n_images = 0
-        batch_paths = []
-        batch_labels = []
-
-        print('Collecting and checking images...')
-        for img_path in find_all_images(paths):
-            img_label = self._generate_label(img_path, label_type)
-            batch_paths.append(img_path)
-            batch_labels.append(img_label)
-
-            if len(batch_paths) >= batch_size_check:
-                n_images += self._process_image_batch(batch_paths, batch_labels, task_q)
-                batch_paths = []
-                batch_labels = []
-
-        # Process remaining batch
-        if batch_paths:
-            n_images += self._process_image_batch(batch_paths, batch_labels, task_q)
-
-        print(f'Found {n_images} new images to process')
-        return n_images
+    def _filter_out_exists(self, imgs: dict[str, str]) -> dict[str, str]:
+        """Filter out existing images from the database."""
+        if labels := list(imgs.keys()):
+            result: list[bool] = self.service.handle_check_exist_labels(labels, self.db_name)  # type: ignore
+            return {lb: imgs[lb] for lb, exist in zip(labels, result, strict=True) if not exist}
+        return {}
 
     def add_images(self, paths: list[str], label_type: str = 'path') -> int:
-        """Handle adding images to the index using queue-based thread pool."""
-        # Create queues
-        task_q: Queue[Path] = Queue()
+        """Handle adding images to the index using thread pool."""
+        print('Collecting images...')
+        pool = ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2))
+        found_ipaths: dict[str, str] = {}
+        to_added: dict[str, str] = {}
+        n_images = 0
 
-        # Filter non-existing images and add to queue
-        n_images = self._filter_non_existing_images(paths, label_type, task_q)
+        for img_path in ut.find_all_images(paths):
+            label = img_path.stem if label_type == 'name' else str(img_path.resolve())
+            found_ipaths[label] = str(img_path)
 
-        # Create fixed number of worker threads
-        print('Preprocessing images...')
-        threads = []
-        max_workers = max(os.cpu_count() or 2, 2)
-        for _ in range(max_workers):
-            t = Thread(target=self._preprocess_image, args=(task_q, label_type))
-            t.start()
-            threads.append(t)
+            if len(found_ipaths) >= BATCH_SIZE:
+                new_images = self._filter_out_exists(found_ipaths)
+                to_added.update(new_images)
+                found_ipaths = {}
+                if len(to_added) >= BATCH_SIZE:
+                    pool.submit(self._preprocess_images, to_added)
+                    n_images += len(to_added)
+                    to_added = {}
 
-        # Wait for all threads to complete
-        for t in threads:
-            t.join()
+        # Process remaining found_ipaths
+        if found_ipaths:
+            new_images = self._filter_out_exists(found_ipaths)
+            to_added.update(new_images)
+
+        # Submit remaining to_added
+        if to_added:
+            pool.submit(self._preprocess_images, to_added)
+            n_images += len(to_added)
+
+        print(f'Preprocessing {n_images} images...')
+        pool.shutdown(wait=True)
 
         return n_images
 
@@ -169,17 +139,17 @@ class Client:
         query_path = Path(target)
         try:
             results: list | None
-            if query_path.is_file() and is_image(query_path):
+            if query_path.is_file() and ut.is_image(query_path):
                 # Image search
                 img = Image.open(query_path)
-                img_bytes = img2bytes(img, 480)
+                img_bytes = ut.img2bytes(img, 384)
                 results = self.service.handle_search(img_bytes, k=num, similarity=similarity, db_name=self.db_name)
             else:
                 # Text search
                 results = self.service.handle_search(str(target), k=num, similarity=similarity, db_name=self.db_name)
             return results
         except Exception as e:
-            print_err(f'Failed to search: {e} ({e.__class__.__name__})')
+            ut.print_err(f'Failed to search: {e} ({e.__class__.__name__})')
             return None
 
     def list_dbs(self) -> list[str]:
@@ -187,7 +157,7 @@ class Client:
         try:
             return self.service.handle_list_dbs()  # type: ignore
         except Exception as e:
-            print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
+            ut.print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
             return []
 
     def get_db_info(self) -> dict:
@@ -195,7 +165,7 @@ class Client:
         try:
             return self.service.handle_get_db_info(self.db_name)  # type: ignore
         except Exception as e:
-            print_err(f'Failed to get database info: {e} ({e.__class__.__name__})')
+            ut.print_err(f'Failed to get database info: {e} ({e.__class__.__name__})')
             return {}
 
     def clear_db(self) -> bool:
@@ -203,17 +173,21 @@ class Client:
         try:
             return self.service.handle_clear_db(self.db_name)  # type: ignore
         except Exception as e:
-            print_err(f'Failed to clear database: {e} ({e.__class__.__name__})')
+            ut.print_err(f'Failed to clear database: {e} ({e.__class__.__name__})')
             return False
 
     def compare_images(self, path1: str, path2: str) -> float:
         """Handle image comparison request."""
         try:
-            abs_path1 = str(Path(path1).resolve())
-            abs_path2 = str(Path(path2).resolve())
-            return self.service.handle_compare_images(abs_path1, abs_path2)  # type: ignore
+            img1 = Image.open(path1)
+            ibytes1 = ut.img2bytes(img1, 384)
+
+            img2 = Image.open(path2)
+            ibytes2 = ut.img2bytes(img2, 384)
+
+            return self.service.handle_compare_images(ibytes1, ibytes2)  # type: ignore
         except Exception as e:
-            print_err(f'Failed to compare images: {e} ({e.__class__.__name__})')
+            ut.print_err(f'Failed to compare images: {e} ({e.__class__.__name__})')
             return 0
 
 
@@ -239,13 +213,13 @@ def create_parser() -> ArgumentParser:
     common = ArgumentParser(add_help=False)
     common.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help='Database name')
 
-    parser = ArgumentParser(prog='isearch', description=bold('Lightweight Image Search Engine'))
+    parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
 
     # Create subparsers for subcommands
     subcmd = parser.add_subparsers(dest='command')
 
     # Search Image
-    cmd_search = subcmd.add_parser('search', parents=[common], help=f'Search images {bold("(default)")}')
+    cmd_search = subcmd.add_parser('search', parents=[common], help=f'Search images {ut.bold("(default)")}')
     cmd_search.add_argument(
         '-n', dest='num', type=int, default=10, help='Number of search results (default: %(default)s)'
     )
@@ -262,14 +236,24 @@ def create_parser() -> ArgumentParser:
     # Service management subcommand
     cmd_service = subcmd.add_parser('service', help='Manage the imgsearch service', formatter_class=DefaultHelper)
     cmd_service.add_argument('-b', dest='base_dir', type=Path, default=BASE_DIR, help='Database base directory path')
-    cmd_service.add_argument('-m', dest='model', type=str, help='CLIP model name for the service to use')
-    cmd_service.add_argument('action', choices=['start', 'stop', 'status', 'setup'], help='Service action to perform')
+    cmd_service.add_argument(
+        '-m',
+        dest='model_key',
+        choices=sorted(MODELS.keys()),
+        default=DEFAULT_MODEL_KEY,
+        metavar='MODEL_KEY',
+        help='CLIP model key for the service to use, options: %(choices)s',
+    )
+    cmd_service.add_argument(
+        'action',
+        choices=['start', 'stop', 'status'],
+        metavar='ACTION',
+        help='Service action to perform, options: %(choices)s',
+    )
 
     # Add subcommand
     cmd_add = subcmd.add_parser('add', parents=[common], help='Add images to database', formatter_class=DefaultHelper)
-    cmd_add.add_argument(
-        '-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method: path, name'
-    )
+    cmd_add.add_argument('-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method')
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
@@ -299,7 +283,7 @@ def main() -> None:  # noqa: C901
     # Handle service subcommand
     if args.command == 'service':
         client = Client()
-        client.handle_service_command(args.action, base_dir=args.base_dir, model_name=args.model or DEFAULT_MODEL)
+        client.handle_service_command(args.action, base_dir=args.base_dir, model_key=args.model_key)
 
     elif args.command == 'add':
         client = Client(db_name=args.db_name)
@@ -315,31 +299,31 @@ def main() -> None:  # noqa: C901
         client = Client(db_name=args.db_name)
         if args.list:
             if databases := client.list_dbs():
-                print(colorize('Available databases:', 'blue', True))
+                print(ut.colorize('Available databases:', 'blue', True))
                 for db_name in databases:
                     print(f'  - {db_name}')
             else:
-                print_warn('No databases found.')
+                ut.print_warn('No databases found.')
         elif args.info:
             if info := client.get_db_info():
-                print(colorize(f'Database "{args.db_name}"', 'blue', True))
+                print(ut.colorize(f'Database "{args.db_name}"', 'blue', True))
                 for key, value in info.items():
-                    print(f'  - {bold(key.title().replace("_", ""))}: {value}')
+                    print(f'  - {ut.bold(key.title().replace("_", ""))}: {value}')
             else:
-                print_err(f'Failed to get database info for "{args.db_name}".')
+                ut.print_err(f'Failed to get database info for "{args.db_name}".')
         elif args.clear:
-            notice = colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
+            notice = ut.colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
                 if client.clear_db():
                     print(f'Database "{args.db_name}" has been cleared.')
                 else:
-                    print_err(f'Failed to clear the database "{args.db_name}".')
+                    ut.print_err(f'Failed to clear the database "{args.db_name}".')
 
     elif args.command == 'search':
         client = Client(db_name=args.db_name)
         # Validate similarity parameter
         if not 0.0 <= args.min_similarity <= 100.0:
-            print_err('Error: min_similarity must be between 0 and 100')
+            ut.print_err('Error: min_similarity must be between 0 and 100')
             sys.exit(1)
 
         print(f'Searching {args.target}...')
@@ -350,7 +334,7 @@ def main() -> None:  # noqa: C901
                 print(f'{i:2d}. {path}  {similarity}%')
 
             if args.open_res:
-                open_images([path for path, _ in results])
+                ut.open_images([path for path, _ in results])
         elif results is None:
             print('Search queue is full, please try again later.')
         else:

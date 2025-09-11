@@ -4,6 +4,7 @@ import signal
 import threading
 from collections import defaultdict
 from collections.abc import Sequence
+from functools import cached_property
 from pathlib import Path
 from queue import Full, Queue
 from typing import Any
@@ -12,7 +13,7 @@ import psutil
 import Pyro5.server
 from PIL import Image
 
-from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL, IDX_NAME, MAP_NAME, SERVICE_NAME, UNIX_SOCKET
+from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL_KEY, SERVICE_NAME, UNIX_SOCKET
 from imgsearch.storage import VectorDB
 from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
 
@@ -33,18 +34,16 @@ class RPCService:
     All methods are thread-safe using a simple lock.
     """
 
-    def __init__(self, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL):
+    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY):
         """
         Initialize the RPC service with async processing.
 
         Args:
             base_dir: Path to the database base directory
-            model_name: Name of the CLIP model to use
+            model_key: Key of the CLIP model to use
         """
-        from imgsearch.clip import Clip  # import when needed
-
-        self.clip = Clip(model_name)
         self.base_dir = base_dir
+        self.model_key = model_key
         self.databases: dict[str, VectorDB] = {}
         self._lock = threading.Lock()
 
@@ -56,6 +55,13 @@ class RPCService:
         # Search concurrency control
         self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
+
+    @cached_property
+    def clip(self):
+        """Initialize CLIP model"""
+        from imgsearch.clip import Clip
+
+        return Clip(model_key=self.model_key)
 
     def _get_db(self, db_name: str = DB_NAME):
         """Get database instance"""
@@ -203,23 +209,12 @@ class RPCService:
         Returns:
             List of database names found in the base directory
         """
-        databases: list[str] = []
         try:
-            if not self.base_dir.exists():
-                return databases
-
-            for item in self.base_dir.iterdir():
-                if item.is_dir():
-                    # Check if directory contains both index and mapping files
-                    idx_file = item / IDX_NAME
-                    map_file = item / MAP_NAME
-                    if idx_file.exists() and map_file.exists():
-                        databases.append(item.name)
-
+            db = self._get_db(DB_NAME)
+            return db.db_list()
         except Exception as e:
             logger.error(f'Failed to list databases: {e}')
-
-        return sorted(databases)
+            return []
 
     def handle_get_db_info(self, db_name: str = DB_NAME) -> dict:
         """
@@ -259,21 +254,21 @@ class RPCService:
             logger.error(f'Failed to clear database: {e}')
             return False
 
-    def handle_compare_images(self, path1: str, path2: str) -> float:
+    def handle_compare_images(self, ibytes1: bytes, ibytes2: bytes) -> float:
         """
         Compare similarity between two images.
 
         Args:
-            path1: Path to the first image
-            path2: Path to the second image
+            ibytes1: Bytes of the first image
+            ibytes2: Bytes of the second image
 
         Returns:
             Similarity percentage (0-100)
         """
-        logger.info(f'[Compare] {path1} and {path2}')
+        logger.info('[Compare] 2 images')
 
         try:
-            img1, img2 = Image.open(path1), Image.open(path2)
+            img1, img2 = bytes2img(ibytes1), bytes2img(ibytes2)
             return self.clip.compare_images(img1, img2)
         except Exception as e:
             logger.error(f'Failed to compare images: {e}')
@@ -283,13 +278,13 @@ class RPCService:
 class Server:
     """Server for the RPC service with pid file management and signal handling."""
 
-    def __init__(self, base_dir: Path = BASE_DIR, model_name: str = DEFAULT_MODEL):
+    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY):
         self.daemon = None
         self._shutdown_requested = False
         self._restart_requested = False
         self.service = None
         self.base_dir = base_dir
-        self.model_name = model_name
+        self.model_key = model_key
         self.pid_file = self.base_dir / 'isearch.pid'
 
     def _write_pid_file(self):
@@ -350,7 +345,7 @@ class Server:
             signal.signal(signal.SIGINT, self.handle_signal)
 
             # Initialize service
-            self.service = RPCService(base_dir=self.base_dir, model_name=self.model_name)
+            self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key)
             self.daemon = Pyro5.server.Daemon(unixsocket=str(UNIX_SOCKET))
             self.daemon.register(self.service, objectId=SERVICE_NAME)
 
@@ -359,7 +354,7 @@ class Server:
             logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
             logger.debug(f'PID: {os.getpid()}')
             logger.debug(f'Base dir: {self.base_dir}')
-            logger.debug(f'Model: {self.model_name}')
+            logger.debug(f'Model: {self.model_key}')
             logger.info('iSearch service started')
 
             self.daemon.requestLoop()

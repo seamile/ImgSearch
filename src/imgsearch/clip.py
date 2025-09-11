@@ -6,7 +6,7 @@ import torch
 from open_clip import create_model_and_transforms, get_tokenizer
 from PIL import Image
 
-from imgsearch.consts import DEFAULT_MODEL, PRETRAINED
+from imgsearch.consts import DEFAULT_MODEL_KEY, MODELS
 from imgsearch.utils import Feature, cpu_count
 
 # Disable transformers warnings
@@ -18,9 +18,10 @@ for name, logger in logging.Logger.manager.loggerDict.items():
 class Clip:
     """CLIP model wrapper"""
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, device: str | None = None) -> None:
+    def __init__(self, model_key: str = DEFAULT_MODEL_KEY, device: str | None = None) -> None:
         self.device = self.get_device(device)
-        self.model, self.processor, self.tokenizer = self.load_model(model_name)
+        self.model, self.processor, self.tokenizer = self.load_model(model_key)
+
         # Move model to device and ensure proper dtype
         self.model = self.model.to(self.device)  # type: ignore
         self.model.eval()
@@ -59,8 +60,9 @@ class Clip:
             return torch.device('cpu')
 
     @staticmethod
-    def load_model(model_name: str = DEFAULT_MODEL, pretrained: str = PRETRAINED):
+    def load_model(model_key: str = DEFAULT_MODEL_KEY):
         """Load CLIP model and processor"""
+        model_name, pretrained = MODELS[model_key]
         model, _, processor = create_model_and_transforms(model_name, pretrained=pretrained)
         tokenizer = get_tokenizer(model_name)
         return model, processor, tokenizer  # type: ignore
