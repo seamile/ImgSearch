@@ -27,44 +27,52 @@ class Client:
     supporting image search, database management, and service control operations.
     """
 
-    def __init__(self, db_name: str = DB_NAME) -> None:
+    def __init__(self, db_name: str = DB_NAME, bind: str = UNIX_SOCKET) -> None:
         """Initialize the imgsearch client."""
         self.db_name = db_name
+        self.bind = bind
 
     @property
     def service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not hasattr(_thread_local, 'service'):
-            if not UNIX_SOCKET.exists():
-                ut.print_err(f"Service not running or socket file missing at '{UNIX_SOCKET}'.")
-                ut.print_err('You can start the service with: isearch service start')
-                sys.exit(1)
+            bind_path = Path(self.bind)
+            if bind_path.is_socket():
+                if not bind_path.exists():
+                    ut.print_err(f"Service not running or socket file missing at '{self.bind}'.")
+                    ut.print_err("You can start the service with: 'isearch service start'")
+                    sys.exit(1)
+                uri = f'PYRO:{SERVICE_NAME}@./u:{self.bind}'
+            else:
+                # Assume ip:port format
+                host, port = self.bind.split(':', 1)
+                uri = f'PYRO:{SERVICE_NAME}@{host}:{port}'
 
             try:
                 # Configure Pyro5 to use msgpack serializer
                 Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
-                uri = f'PYRO:{SERVICE_NAME}@./u:{UNIX_SOCKET}'
                 _thread_local.service = Pyro5.api.Proxy(uri)
                 _thread_local.service._pyroBind()  # A quick check to see if the server is responsive
             except Pyro5.errors.CommunicationError:
-                ut.print_err(f"Failed to connect to service socket at '{UNIX_SOCKET}'.")
-                ut.print_err('Is the imgsearch service running? Check with: isearch service status')
+                ut.print_err(f"Failed to connect to service at '{self.bind}'.")
+                ut.print_err("Is the imgsearch service running? Check with: 'isearch service status'")
                 sys.exit(1)
             except Exception as e:
                 ut.print_err(f'An unexpected error occurred while connecting to the service: {e}')
                 sys.exit(1)
         return _thread_local.service
 
+    @staticmethod
     def handle_service_command(
-        self,
         service_cmd: str,
         base_dir: Path = BASE_DIR,
         model_key: str = DEFAULT_MODEL_KEY,
+        bind: str = UNIX_SOCKET,
     ) -> None:
         """Handle service management commands."""
         from .server import Server
 
-        server = Server(base_dir=base_dir, model_key=model_key)
+        server = Server(base_dir=base_dir, model_key=model_key, bind=bind)
         match service_cmd:
             case 'start':
                 server.run()
@@ -214,6 +222,7 @@ def create_parser() -> ArgumentParser:
     common.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help='Database name')
 
     parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
+    parser.add_argument('-b', '--bind', type=str, default=UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
 
     # Create subparsers for subcommands
     subcmd = parser.add_subparsers(dest='command')
@@ -282,21 +291,20 @@ def main() -> None:  # noqa: C901
 
     # Handle service subcommand
     if args.command == 'service':
-        client = Client()
-        client.handle_service_command(args.action, base_dir=args.base_dir, model_key=args.model_key)
+        Client.handle_service_command(args.action, base_dir=args.base_dir, model_key=args.model_key, bind=args.bind)
 
     elif args.command == 'add':
-        client = Client(db_name=args.db_name)
+        client = Client(db_name=args.db_name, bind=args.bind)
         n_added = client.add_images(args.paths, args.label)
         print(f'Added {n_added} images for processing')
 
     elif args.command == 'cmp':
-        client = Client()
+        client = Client(bind=args.bind)
         similarity = client.compare_images(args.path1, args.path2)
         print(f'Similarity between images: {similarity}%')
 
     elif args.command == 'db':
-        client = Client(db_name=args.db_name)
+        client = Client(db_name=args.db_name, bind=args.bind)
         if args.list:
             if databases := client.list_dbs():
                 print(ut.colorize('Available databases:', 'blue', True))
@@ -320,7 +328,7 @@ def main() -> None:  # noqa: C901
                     ut.print_err(f'Failed to clear the database "{args.db_name}".')
 
     elif args.command == 'search':
-        client = Client(db_name=args.db_name)
+        client = Client(db_name=args.db_name, bind=args.bind)
         # Validate similarity parameter
         if not 0.0 <= args.min_similarity <= 100.0:
             ut.print_err('Error: min_similarity must be between 0 and 100')

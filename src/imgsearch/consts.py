@@ -26,4 +26,4 @@ CAPACITY = 10000
 
 # The name for the service and the socket file.
 SERVICE_NAME = 'isearch.service'
-UNIX_SOCKET = BASE_DIR / 'isearch.sock'
+UNIX_SOCKET = str((BASE_DIR / 'isearch.sock').resolve())

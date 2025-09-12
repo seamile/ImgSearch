@@ -1,10 +1,10 @@
 import logging
 import os
+import re
 import signal
 import threading
 from collections import defaultdict
 from collections.abc import Sequence
-from functools import cached_property
 from pathlib import Path
 from queue import Full, Queue
 from typing import Any
@@ -20,6 +20,7 @@ from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
+NETLOC = re.compile(r'^(?P<host>[^:]+):(?P<port>\d+)$')
 
 logger = get_logger('ImgSearchService', logging.INFO)
 
@@ -42,9 +43,11 @@ class RPCService:
             base_dir: Path to the database base directory
             model_key: Key of the CLIP model to use
         """
+        from imgsearch.clip import Clip
+
         self.base_dir = base_dir
-        self.model_key = model_key
         self.databases: dict[str, VectorDB] = {}
+        self.clip = Clip(model_key=model_key)
         self._lock = threading.Lock()
 
         # Async processing queue - now includes db_name
@@ -56,16 +59,10 @@ class RPCService:
         self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
 
-    @cached_property
-    def clip(self):
-        """Initialize CLIP model"""
-        from imgsearch.clip import Clip
-
-        return Clip(model_key=self.model_key)
-
     def _get_db(self, db_name: str = DB_NAME):
         """Get database instance"""
         if db_name not in self.databases:
+            logger.debug(f'Loading database: {db_name}')
             self.databases[db_name] = VectorDB(db_name, self.base_dir)
         return self.databases[db_name]
 
@@ -278,14 +275,41 @@ class RPCService:
 class Server:
     """Server for the RPC service with pid file management and signal handling."""
 
-    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY):
-        self.daemon = None
+    def __init__(
+        self,
+        base_dir: Path = BASE_DIR,
+        model_key: str = DEFAULT_MODEL_KEY,
+        bind: str = UNIX_SOCKET,
+    ):
         self._shutdown_requested = False
         self._restart_requested = False
-        self.service = None
         self.base_dir = base_dir
         self.model_key = model_key
+        self.bind = bind
         self.pid_file = self.base_dir / 'isearch.pid'
+
+        # Create service and daemon
+        self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key)
+        self.daemon = self.create_daemon()
+
+    def create_daemon(self):
+        """Create and configure Pyro5 Daemon instance."""
+
+        if netloc := NETLOC.match(self.bind):
+            # TCP connection
+            host = netloc.group('host')
+            port = int(netloc.group('port'))
+            daemon = Pyro5.server.Daemon(host=host, port=port)
+        else:
+            # UDS connection
+            uds_path = Path(self.bind)
+            if uds_path.exists():
+                # clean up existing socket if present
+                uds_path.unlink()
+                logger.warning(f'Cleaned up existing unix socket: {self.bind}')
+            daemon = Pyro5.server.Daemon(unixsocket=self.bind)
+
+        return daemon
 
     def _write_pid_file(self):
         """Write current process ID to pid file."""
@@ -324,16 +348,17 @@ class Server:
         # Configure Pyro5 to use msgpack serializer
         Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
 
-        # Check if already running
-        existing_pid = self._read_pid_file()
-        if existing_pid and self.is_running(existing_pid):
-            logger.error(f'Server already running with PID {existing_pid}')
-            return
-
-        if UNIX_SOCKET.exists():
-            UNIX_SOCKET.unlink()
-
         try:
+            # Check if already running
+            existing_pid = self._read_pid_file()
+            if existing_pid and self.is_running(existing_pid):
+                logger.error(f'Server already running with PID {existing_pid}')
+                return
+
+            if self.daemon is None:
+                logger.error('Pyro5 Daemon not initialized')
+                return
+
             logger.info('Starting ImgSearch Service...')
 
             # Create pid file
@@ -344,21 +369,18 @@ class Server:
             signal.signal(signal.SIGHUP, self.handle_signal)
             signal.signal(signal.SIGINT, self.handle_signal)
 
-            # Initialize service
-            self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key)
-            self.daemon = Pyro5.server.Daemon(unixsocket=str(UNIX_SOCKET))
+            # Register service and start daemon
             self.daemon.register(self.service, objectId=SERVICE_NAME)
 
-            # log service info
-            logger.debug(f'Listening on: {UNIX_SOCKET}')
-            logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
-            logger.debug(f'PID: {os.getpid()}')
-            logger.debug(f'Base dir: {self.base_dir}')
-            logger.debug(f'Model: {self.model_key}')
+            # Log service info
             logger.info('iSearch service started')
+            logger.debug(f'Listening : {self.bind}')
+            logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
+            logger.debug(f'Process ID: {os.getpid()}')
+            logger.debug(f'Base dir  : {self.base_dir}')
+            logger.debug(f'Model     : {self.model_key}')
 
             self.daemon.requestLoop()
-
         except Exception as e:
             logger.error(f'Server failed to start: {e}')
         finally:
@@ -402,6 +424,7 @@ class Server:
 
     def cleanup(self):
         """Cleanup resources before exit."""
+        # Save databases
         if isinstance(self.service, RPCService):
             for name, db in self.service.databases.items():
                 try:
@@ -410,10 +433,20 @@ class Server:
                 except Exception as e:
                     logger.error(f'Failed to save db "{name}": {e}')
 
+        # Shutdown daemon if running
+        if self.daemon:
+            try:
+                self.daemon.shutdown()
+                logger.debug('Daemon shutdown completed')
+            except Exception as e:
+                logger.error(f'Failed to shutdown daemon: {e}')
+
         # Cleanup socket
-        if UNIX_SOCKET.exists():
-            logger.debug('Cleaning up socket')
-            UNIX_SOCKET.unlink()
+        if isinstance(self.bind, str):
+            uds_path = Path(self.bind)
+            if uds_path.is_socket():
+                logger.debug(f'Cleaning up unix socket: {self.bind}')
+                uds_path.unlink()
 
         # Remove pid file
         self._remove_pid_file()
