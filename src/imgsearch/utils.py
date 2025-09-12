@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from io import BytesIO
 from itertools import islice
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from PIL import Image
@@ -147,7 +148,13 @@ def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
         # Background: use file handler
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / 'isearch.log'
-        handler = logging.FileHandler(log_file)
+        handler = TimedRotatingFileHandler(
+            filename=log_file,
+            when='midnight',
+            interval=1,
+            backupCount=7,
+            encoding='utf-8',
+        )
         handler.setLevel(level)
     formatter = ColorFormatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)

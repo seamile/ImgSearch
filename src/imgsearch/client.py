@@ -68,11 +68,12 @@ class Client:
         base_dir: Path = BASE_DIR,
         model_key: str = DEFAULT_MODEL_KEY,
         bind: str = UNIX_SOCKET,
+        log_level: str = 'info',
     ) -> None:
         """Handle service management commands."""
         from .server import Server
 
-        server = Server(base_dir=base_dir, model_key=model_key, bind=bind)
+        server = Server(base_dir=base_dir, model_key=model_key, bind=bind, log_level=log_level)
         match service_cmd:
             case 'start':
                 server.run()
@@ -264,6 +265,14 @@ def create_parser() -> ArgumentParser:
         metavar='ACTION',
         help='Service action to perform, options: %(choices)s',
     )
+    cmd_service.add_argument(
+        '-L',
+        dest='log_level',
+        choices=['debug', 'info', 'warning', 'error'],
+        default='info',
+        metavar='LOG_LEVEL',
+        help='Log level for the service, options: %(choices)s',
+    )
 
     # Add images subcommand
     cmd_add = subcmd.add_parser(
@@ -301,7 +310,9 @@ def main() -> None:  # noqa: C901
 
     # Handle service subcommand
     if args.command == 'service':
-        Client.handle_service_command(args.action, base_dir=args.base_dir, model_key=args.model_key, bind=args.bind)
+        Client.handle_service_command(
+            args.action, base_dir=args.base_dir, model_key=args.model_key, bind=args.bind, log_level=args.log_level
+        )
 
     elif args.command == 'add':
         client = Client(db_name=args.db_name, bind=args.bind)

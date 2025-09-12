@@ -23,8 +23,6 @@ Image.MAX_IMAGE_PIXELS = 100_000_000
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 NETLOC = re.compile(r'^(?P<host>[^:]+):(?P<port>\d+)$')
 
-logger = get_logger('ImgSearchService', logging.INFO)
-
 
 @Pyro5.server.expose
 class RPCService:
@@ -36,18 +34,20 @@ class RPCService:
     All methods are thread-safe using a simple lock.
     """
 
-    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY):
+    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY, logger=None):
         """
         Initialize the RPC service with async processing.
 
         Args:
             base_dir: Path to the database base directory
             model_key: Key of the CLIP model to use
+            logger: Logger instance (optional, passed from Server)
         """
         self.base_dir = base_dir
         self.model_key = model_key
         self.databases: dict[str, VectorDB] = {}
         self._lock = threading.Lock()
+        self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
         # Async processing queue - now includes db_name
         self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=BATCH_SIZE * 3)
@@ -68,7 +68,7 @@ class RPCService:
     def _get_db(self, db_name: str = DB_NAME):
         """Get database instance"""
         if db_name not in self.databases:
-            logger.debug(f'Loading database: {db_name}')
+            self.logger.debug(f'Loading database: {db_name}')
             self.databases[db_name] = VectorDB(db_name, self.base_dir)
         return self.databases[db_name]
 
@@ -79,7 +79,7 @@ class RPCService:
 
     def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
-        logger.debug(f'Processing batch of {len(images)} images ({db_name})')
+        self.logger.debug(f'Processing batch of {len(images)} images ({db_name})')
         try:
             features = self.clip.embed_images(images)
 
@@ -88,10 +88,10 @@ class RPCService:
                 db.add_items(labels, features)
                 db.save()
 
-            logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.size=})')
+            self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.size=})')
 
         except Exception as e:
-            logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
+            self.logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
 
     def _process_queue(self) -> None:
         """Background thread to process images from queue."""
@@ -130,7 +130,7 @@ class RPCService:
         Returns:
             Number of images queued for processing
         """
-        logger.info(f'[AddImages] {len(images)} images received for db: {db_name}')
+        self.logger.info(f'[AddImages] {len(images)} images received for db: {db_name}')
 
         queued_count = 0
         try:
@@ -139,7 +139,7 @@ class RPCService:
                 self.image_queue.put((label, image, db_name))
                 queued_count += 1
         except Full as e:
-            logger.error(f'Queue full, dropping image: {e}')
+            self.logger.error(f'Queue full, dropping image: {e}')
 
         return queued_count
 
@@ -162,11 +162,11 @@ class RPCService:
         """
         # Non-blocking concurrency control
         if not self.search_semaphore.acquire(blocking=False):
-            logger.info(f'[Search] Rejected - {self.max_concurrent_searches} concurrent searches active')
+            self.logger.info(f'[Search] Rejected - {self.max_concurrent_searches} concurrent searches active')
             return None
 
         try:
-            logger.info(f'[Search] type={type(query).__name__}, {k=}, {similarity=}, {db_name=}')
+            self.logger.info(f'[Search] type={type(query).__name__}, {k=}, {similarity=}, {db_name=}')
 
             # Handle Pyro5 serialization quirks
             if isinstance(query, str):
@@ -190,17 +190,17 @@ class RPCService:
                     img = bytes2img(img_data)
                     feature = self.clip.embed_image(img)
                 else:
-                    logger.error(f'Invalid dict format: {list(query.keys())}')
+                    self.logger.error(f'Invalid dict format: {list(query.keys())}')
                     return []
 
             else:
-                logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
+                self.logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
                 return []
 
             db = self._get_db(db_name)
             return db.search(feature, k, similarity)
         except Exception as e:
-            logger.error(f'Text search failed: {e}')
+            self.logger.error(f'Text search failed: {e}')
             return []
         finally:
             self.search_semaphore.release()
@@ -213,10 +213,11 @@ class RPCService:
             List of database names found in the base directory
         """
         try:
-            db = self._get_db(DB_NAME)
-            return db.db_list()
+            db_list = self._get_db(DB_NAME).db_list()
+            self.logger.debug(f'List dbs: {db_list}')
+            return db_list
         except Exception as e:
-            logger.error(f'Failed to list databases: {e}')
+            self.logger.error(f'Failed to list databases: {e}')
             return []
 
     def handle_get_db_info(self, db_name: str = DB_NAME) -> dict:
@@ -229,6 +230,7 @@ class RPCService:
         Returns:
             Dictionary containing database statistics (base_dir, size, capacity)
         """
+        self.logger.debug(f'Get db info: {db_name}')
         db = self._get_db(db_name)
         return {
             'base': str(db.base.resolve()),
@@ -246,15 +248,15 @@ class RPCService:
         Returns:
             True if successful, False otherwise
         """
-        logger.warning(f'[Clear] Clear database: {db_name}')
+        self.logger.warning(f'[Clear] Clear database: {db_name}')
         try:
             db = self._get_db(db_name)
             with self._lock:
                 db.clear()
-                logger.debug(f'Database {db_name} cleared')
+                self.logger.debug(f'Database {db_name} cleared')
                 return True
         except Exception as e:
-            logger.error(f'Failed to clear database: {e}')
+            self.logger.error(f'Failed to clear database: {e}')
             return False
 
     def handle_compare_images(self, ibytes1: bytes, ibytes2: bytes) -> float:
@@ -268,14 +270,25 @@ class RPCService:
         Returns:
             Similarity percentage (0-100)
         """
-        logger.info('[Compare] 2 images')
+        self.logger.info('[Compare] 2 images')
 
         try:
             img1, img2 = bytes2img(ibytes1), bytes2img(ibytes2)
             return self.clip.compare_images(img1, img2)
         except Exception as e:
-            logger.error(f'Failed to compare images: {e}')
+            self.logger.error(f'Failed to compare images: {e}')
             return 0
+
+
+def get_log_level(level: str) -> int:
+    """Map log level string to logging level constant."""
+    mapping = {
+        'debug': logging.DEBUG,
+        'info': logging.INFO,
+        'warning': logging.WARNING,
+        'error': logging.ERROR,
+    }
+    return mapping.get(level.lower(), logging.INFO)
 
 
 class Server:
@@ -286,6 +299,7 @@ class Server:
         base_dir: Path = BASE_DIR,
         model_key: str = DEFAULT_MODEL_KEY,
         bind: str = UNIX_SOCKET,
+        log_level: str = 'info',
     ):
         self._shutdown_requested = False
         self._restart_requested = False
@@ -294,8 +308,11 @@ class Server:
         self.bind = bind
         self.pid_file = self.base_dir / 'isearch.pid'
 
+        # Setup logger
+        self.logger = get_logger('ImgSearchService', level=get_log_level(log_level))
+
         # Create service
-        self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key)
+        self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key, logger=self.logger)
         self.daemon: Pyro5.server.Daemon | None = None
 
     def create_daemon(self):
@@ -319,7 +336,7 @@ class Server:
         try:
             self.pid_file.write_text(str(os.getpid()))
         except Exception as e:
-            logger.error(f'Failed to create PID file: {e}')
+            self.logger.error(f'Failed to create PID file: {e}')
             raise
 
     def _read_pid_file(self) -> int | None:
@@ -333,9 +350,9 @@ class Server:
         try:
             if self.pid_file.exists():
                 self.pid_file.unlink()
-                logger.debug('PID file removed')
+                self.logger.debug('PID file removed')
         except Exception as e:
-            logger.error(f'Failed to remove PID file: {e}')
+            self.logger.error(f'Failed to remove PID file: {e}')
 
     @staticmethod
     def is_running(pid: int) -> bool:
@@ -355,13 +372,13 @@ class Server:
             # Check if already running
             existing_pid = self._read_pid_file()
             if not existing_pid or not self.is_running(existing_pid):
-                logger.info('Starting iSearch Service...')
+                self.logger.info('Starting iSearch Service...')
             else:
-                logger.error(f'Server already running with PID {existing_pid}')
+                self.logger.error(f'Server already running with PID {existing_pid}')
                 return
 
             # Register service and start daemon
-            logger.info('Preloading CLIP model...')
+            self.logger.info('Preloading CLIP model...')
             self.daemon = self.create_daemon()
             self.daemon.register(self.service, objectId=SERVICE_NAME)
             self.service.clip  # preload clip model  # noqa: B018
@@ -375,19 +392,19 @@ class Server:
             signal.signal(signal.SIGINT, self.handle_signal)
 
             # Log service info
-            logger.info('iSearch service started')
-            logger.debug(f'Listening : {self.bind}')
-            logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
-            logger.debug(f'Process ID: {os.getpid()}')
-            logger.debug(f'Base dir  : {self.base_dir}')
-            logger.debug(f'Model     : {self.model_key}')
+            self.logger.info('iSearch service started')
+            self.logger.debug(f'Listening : {self.bind}')
+            self.logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
+            self.logger.debug(f'Process ID: {os.getpid()}')
+            self.logger.debug(f'Base dir  : {self.base_dir}')
+            self.logger.debug(f'Model     : {self.model_key}')
 
             self.daemon.requestLoop()
         except Exception as e:
-            logger.error(f'Server failed to start: {e}')
+            self.logger.error(f'Server failed to start: {e}')
         finally:
             self.cleanup()
-            logger.info('iSearch service stopped')
+            self.logger.info('iSearch service stopped')
 
     def handle_signal(self, signum, _):
         """Handle various signals."""
@@ -397,12 +414,12 @@ class Server:
         match signum:
             case signal.SIGTERM | signal.SIGINT:
                 name = signal.Signals(signum).name
-                logger.warning(f'Received {name}, shutting down now...')
+                self.logger.warning(f'Received {name}, shutting down now...')
                 self._shutdown_requested = True
                 if self.daemon:
                     self.daemon.shutdown()
             case signal.SIGHUP:
-                logger.warning('Received SIGHUP, ignoring (restart not supported)')
+                self.logger.warning('Received SIGHUP, ignoring (restart not supported)')
 
     def stop(self):
         """Stop the running server."""
@@ -431,23 +448,23 @@ class Server:
             for name, db in self.service.databases.items():
                 try:
                     db.save()
-                    logger.debug(f'Database "{name}" saved')
+                    self.logger.debug(f'Database "{name}" saved')
                 except Exception as e:
-                    logger.error(f'Failed to save db "{name}": {e}')
+                    self.logger.error(f'Failed to save db "{name}": {e}')
 
         # Shutdown daemon if running
         if self.daemon:
             try:
                 self.daemon.shutdown()
-                logger.debug('Daemon shutdown completed')
+                self.logger.debug('Daemon shutdown completed')
             except Exception as e:
-                logger.error(f'Failed to shutdown daemon: {e}')
+                self.logger.error(f'Failed to shutdown daemon: {e}')
 
         # Cleanup socket
         if isinstance(self.bind, str):
             uds_path = Path(self.bind)
             if uds_path.is_socket():
-                logger.debug(f'Cleaning up unix socket: {self.bind}')
+                self.logger.debug(f'Cleaning up unix socket: {self.bind}')
                 uds_path.unlink()
 
         # Remove pid file
