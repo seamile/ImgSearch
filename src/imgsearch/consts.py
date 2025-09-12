@@ -14,7 +14,7 @@ MODELS = {
     'ViT-63LY': ('TinyCLIP-auto-ViT-63M-32-Text-31M', 'LAIONYFCC400M'),  # best-performing
 }
 # The default model to use.
-DEFAULT_MODEL_KEY = 'ViT-8Y'
+DEFAULT_MODEL_KEY = 'ViT-45LY'
 BATCH_SIZE = 100
 
 # The paths for the database files.

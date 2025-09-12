@@ -1,5 +1,5 @@
 import sys
-from argparse import ArgumentDefaultsHelpFormatter as DefaultHelper
+from argparse import ArgumentDefaultsHelpFormatter as DefaultFmt
 from argparse import ArgumentParser
 from argparse import _SubParsersAction as SubParsers
 from concurrent.futures import ThreadPoolExecutor
@@ -218,32 +218,37 @@ def shortcut_search(parser: ArgumentParser) -> set[str]:
 
 def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
-    common = ArgumentParser(add_help=False)
-    common.add_argument('-d', dest='db_name', type=str, default=DB_NAME, help='Database name')
+    # Common arguments
+    arg_bind = ArgumentParser(add_help=False)
+    arg_bind.add_argument('-B', dest='bind', default=UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
+    arg_db = ArgumentParser(add_help=False)
+    arg_db.add_argument('-d', dest='db_name', default=DB_NAME, help='Database name')
 
+    # Main parser
     parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
-    parser.add_argument('-b', '--bind', type=str, default=UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
 
     # Create subparsers for subcommands
     subcmd = parser.add_subparsers(dest='command')
 
-    # Search Image
-    cmd_search = subcmd.add_parser('search', parents=[common], help=f'Search images {ut.bold("(default)")}')
-    cmd_search.add_argument(
-        '-n', dest='num', type=int, default=10, help='Number of search results (default: %(default)s)'
+    # Search image subcommand
+    cmd_search = subcmd.add_parser(
+        'search',
+        parents=[arg_bind, arg_db],
+        help=f'Search images {ut.bold("(default)")}',
+        formatter_class=DefaultFmt,
     )
+    cmd_search.add_argument('-m', dest='min_similarity', type=int, default=0, help='Min similarity threshold, 0 - 100')
+    cmd_search.add_argument('-n', dest='num', type=int, default=10, help='Number of search results')
     cmd_search.add_argument('-o', dest='open_res', action='store_true', help='Open the searched images')
-    cmd_search.add_argument(
-        '-m',
-        dest='min_similarity',
-        type=int,
-        default=0,
-        help='Min similarity threshold, 0 - 100 (default: %(default)s)',
-    )
     cmd_search.add_argument('target', nargs='?', help='Search target (image path or keyword)')
 
     # Service management subcommand
-    cmd_service = subcmd.add_parser('service', help='Manage the imgsearch service', formatter_class=DefaultHelper)
+    cmd_service = subcmd.add_parser(
+        'service',
+        parents=[arg_bind],
+        help='Manage the iSearch service',
+        formatter_class=DefaultFmt,
+    )
     cmd_service.add_argument('-b', dest='base_dir', type=Path, default=BASE_DIR, help='Database base directory path')
     cmd_service.add_argument(
         '-m',
@@ -260,20 +265,25 @@ def create_parser() -> ArgumentParser:
         help='Service action to perform, options: %(choices)s',
     )
 
-    # Add subcommand
-    cmd_add = subcmd.add_parser('add', parents=[common], help='Add images to database', formatter_class=DefaultHelper)
+    # Add images subcommand
+    cmd_add = subcmd.add_parser(
+        'add',
+        parents=[arg_bind, arg_db],
+        help='Add images to database',
+        formatter_class=DefaultFmt,
+    )
     cmd_add.add_argument('-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method')
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
-    cmd_db = subcmd.add_parser('db', parents=[common], help='Database management operations')
+    cmd_db = subcmd.add_parser('db', parents=[arg_bind, arg_db], help='Database management operations')
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
     db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
     db_group.add_argument('-c', '--clear', action='store_true', help='Clear the entire database')
     db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
 
-    # Compare subcommand
-    cmd_cmp = subcmd.add_parser('cmp', help='Compare similarity of two images', formatter_class=DefaultHelper)
+    # Compare images subcommand
+    cmd_cmp = subcmd.add_parser('cmp', parents=[arg_bind], help='Compare similarity of two images')
     cmd_cmp.add_argument('path1', metavar='IMG_PATH1', help='First image path')
     cmd_cmp.add_argument('path2', metavar='IMG_PATH2', help='Second image path')
 

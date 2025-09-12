@@ -5,6 +5,7 @@ import signal
 import threading
 from collections import defaultdict
 from collections.abc import Sequence
+from functools import cached_property
 from pathlib import Path
 from queue import Full, Queue
 from typing import Any
@@ -43,11 +44,9 @@ class RPCService:
             base_dir: Path to the database base directory
             model_key: Key of the CLIP model to use
         """
-        from imgsearch.clip import Clip
-
         self.base_dir = base_dir
+        self.model_key = model_key
         self.databases: dict[str, VectorDB] = {}
-        self.clip = Clip(model_key=model_key)
         self._lock = threading.Lock()
 
         # Async processing queue - now includes db_name
@@ -58,6 +57,13 @@ class RPCService:
         # Search concurrency control
         self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
+
+    @cached_property
+    def clip(self):
+        """Get CLIP model instance"""
+        from imgsearch.clip import Clip
+
+        return Clip(model_key=self.model_key)
 
     def _get_db(self, db_name: str = DB_NAME):
         """Get database instance"""
@@ -288,13 +294,12 @@ class Server:
         self.bind = bind
         self.pid_file = self.base_dir / 'isearch.pid'
 
-        # Create service and daemon
+        # Create service
         self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key)
-        self.daemon = self.create_daemon()
+        self.daemon: Pyro5.server.Daemon | None = None
 
     def create_daemon(self):
         """Create and configure Pyro5 Daemon instance."""
-
         if netloc := NETLOC.match(self.bind):
             # TCP connection
             host = netloc.group('host')
@@ -304,9 +309,7 @@ class Server:
             # UDS connection
             uds_path = Path(self.bind)
             if uds_path.exists():
-                # clean up existing socket if present
                 uds_path.unlink()
-                logger.warning(f'Cleaned up existing unix socket: {self.bind}')
             daemon = Pyro5.server.Daemon(unixsocket=self.bind)
 
         return daemon
@@ -351,15 +354,17 @@ class Server:
         try:
             # Check if already running
             existing_pid = self._read_pid_file()
-            if existing_pid and self.is_running(existing_pid):
+            if not existing_pid or not self.is_running(existing_pid):
+                logger.info('Starting iSearch Service...')
+            else:
                 logger.error(f'Server already running with PID {existing_pid}')
                 return
 
-            if self.daemon is None:
-                logger.error('Pyro5 Daemon not initialized')
-                return
-
-            logger.info('Starting ImgSearch Service...')
+            # Register service and start daemon
+            logger.info('Preloading CLIP model...')
+            self.daemon = self.create_daemon()
+            self.daemon.register(self.service, objectId=SERVICE_NAME)
+            self.service.clip  # preload clip model  # noqa: B018
 
             # Create pid file
             self._write_pid_file()
@@ -368,9 +373,6 @@ class Server:
             signal.signal(signal.SIGTERM, self.handle_signal)
             signal.signal(signal.SIGHUP, self.handle_signal)
             signal.signal(signal.SIGINT, self.handle_signal)
-
-            # Register service and start daemon
-            self.daemon.register(self.service, objectId=SERVICE_NAME)
 
             # Log service info
             logger.info('iSearch service started')
