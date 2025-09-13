@@ -1,3 +1,30 @@
+"""Vector Database Module for ImgSearch
+
+This module implements a lightweight vector database using HNSWLIB for approximate
+nearest neighbor search and bidict for label-ID mapping. Supports persistence via
+binary index files and pickled mappings. Designed for CLIP embeddings (512-dim,
+cosine similarity).
+
+Architecture:
+- HNSW Index: Hierarchical Navigable Small World graph for fast ANN search.
+  - Space: 'cosine' for normalized vectors.
+  - Params: ef_construction=400 (build quality), M=32 (connections), allow_replace_deleted=True.
+- Bidict Mapping: Maintains bidirectional ID<->label lookup for O(1) access.
+- Persistence: index.db (HNSW binary), mapping.db (pickled dict).
+- Auto-resize: Increases capacity by 10k when full (initial CAPACITY=10k).
+
+Usage:
+    db = VectorDB('my_db')
+    db.add_items(labels, features)  # Add CLIP vectors
+    results = db.search(query_feature, k=10, similarity=80)  # Top-k with threshold
+    db.save()  # Persist changes
+
+Limitations:
+- Single-threaded writes (no distributed locking).
+- Pickle serialization (security risk for untrusted data).
+- Fixed dim=512 (CLIP-specific).
+"""
+
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
 
@@ -7,18 +34,45 @@ from hnswlib import Index
 from imgsearch.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
 from imgsearch.utils import Feature, ibatch
 
+# Type alias for ID-label mapping
 Mapping = bidict[int, str]
 
 
 class VectorDB:
-    """Vector database for storing and searching item features"""
+    """Vector database using HNSW for ANN search and bidict for label mapping.
+
+    Stores 512-dim CLIP features with cosine similarity. Supports batch add/search,
+    auto-resizing index, persistence, and duplicate checking. Thread-safe for reads;
+    external locking needed for concurrent writes.
+
+    Lifecycle:
+    - Init: Loads or creates index/mapping from files.
+    - Add: Embeds labels/features, resizes if needed, updates mapping.
+    - Search: Dynamic ef adjustment based on k for balance speed/accuracy.
+    - Save: Writes index binary and pickled mapping.
+    - Clear: Resets to empty state.
+
+    Example:
+        db = VectorDB('search_db')
+        db.add_items(['img1', 'img2'], [[0.1]*512, [0.2]*512])
+        matches = db.search([0.15]*512, k=5, similarity=70)
+    """
 
     def __init__(self, db_name: str = DB_NAME, base_dir: Path = BASE_DIR) -> None:
+        """Initialize or load VectorDB instance.
+
+        Creates paths, loads existing DB if files present, or initializes empty.
+        Validates consistency between index count and mapping size.
+
+        Args:
+            db_name (str): Database identifier. Defaults to DB_NAME ('default').
+            base_dir (Path): Root for DB directories. Defaults to BASE_DIR (~/.isearch).
+        """
         self.name = db_name
         self.base = base_dir
         self.path = (base_dir / db_name).resolve()
-        self.idx_path = self.path / IDX_NAME
-        self.map_path = self.path / MAP_NAME
+        self.idx_path = self.path / IDX_NAME  # HNSW index file
+        self.map_path = self.path / MAP_NAME  # Label mapping file
         self.index, self.mapping = self.load_db(self.path)
 
     @property

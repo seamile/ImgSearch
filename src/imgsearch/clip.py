@@ -1,3 +1,11 @@
+"""CLIP Model Wrapper Module
+
+This module provides a high-level wrapper around OpenCLIP models for multimodal
+(image/text) embedding. Supports multiple model variants, automatic device
+selection (CUDA/MPS/CPU), batch processing, and thread-safe concurrent
+preprocessing. Features are normalized to unit length for cosine similarity.
+"""
+
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,32 +17,56 @@ from PIL import Image
 from imgsearch.consts import DEFAULT_MODEL_KEY, MODELS
 from imgsearch.utils import Feature, cpu_count
 
-# Disable transformers warnings
+# Suppress verbose transformers logging
 for name, logger in logging.Logger.manager.loggerDict.items():
     if name.startswith('transformers.') and isinstance(logger, logging.Logger):
         logger.setLevel(logging.ERROR)
 
 
 class Clip:
-    """CLIP model wrapper"""
+    """Wrapper for OpenCLIP models supporting image/text embedding and similarity.
+
+    Handles model loading, device placement (auto-detect CUDA/MPS/CPU), tensor
+    optimization, and batch processing. Features are L2-normalized for cosine
+    similarity computation.
+
+    Thread-safe: uses ThreadPoolExecutor for concurrent image preprocessing.
+    Destructor shuts down executor to prevent resource leaks.
+
+    Example:
+        clip = Clip('ViT-45LY')  # Load default model (ViT-45LY)
+        features = clip.embed_images([img1, img2])  # Batch embed
+        sim = clip.compare_images(img1, img2)  # 0-100% similarity
+    """
 
     def __init__(self, model_key: str = DEFAULT_MODEL_KEY, device: str | None = None) -> None:
+        """Initialize CLIP wrapper with model loading and device setup.
+
+        Loads model/transforms/tokenizer from OpenCLIP, moves to optimal device,
+        sets evaluation mode, and configures threading for CPU/MPS.
+
+        Args:
+            model_key (str): Model variant key from consts.MODELS.
+                Defaults to DEFAULT_MODEL_KEY ('ViT-45LY').
+            device (str | None): Override device ('cuda', 'mps', 'cpu').
+                Defaults to auto-detection.
+        """
         self.device = self.get_device(device)
         self.model, self.processor, self.tokenizer = self.load_model(model_key)
 
-        # Move model to device and ensure proper dtype
+        # Move model to device; ensure float32 for MPS compatibility
         self.model = self.model.to(self.device)  # type: ignore
-        self.model.eval()
+        self.model.eval()  # Disable training-specific layers
 
         if self.device.type == 'cpu':
-            # Set number of threads to avoid slowdown
+            # Optimize CPU threading to prevent slowdowns
             torch.set_num_threads(max(cpu_count(), 2))
 
-        # For MPS, ensure model is in float32
+        # MPS requires explicit float32 (avoids precision issues)
         if self.device.type == 'mps':
             self.model = self.model.float()
 
-        # Thread pool for concurrent preprocessing
+        # Lazy thread pool for image preprocessing (I/O bound)
         self._executor: ThreadPoolExecutor | None = None
 
     def __del__(self):
@@ -43,6 +75,14 @@ class Clip:
 
     @property
     def executor(self) -> ThreadPoolExecutor:
+        """Get thread pool executor for concurrent preprocessing (lazy init).
+
+        Uses CPU count for workers to parallelize I/O-heavy image transforms.
+        Ensures thread-safety for multi-threaded embedding calls.
+
+        Returns:
+            ThreadPoolExecutor: Configured executor instance.
+        """
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=max(cpu_count(), 2))
         return self._executor
