@@ -90,14 +90,14 @@ class Client:
                 img = Image.open(path)
                 send_dict[label] = ut.img2bytes(img, 384)
                 if len(send_dict) >= BATCH_SIZE:
-                    print(f'Sending {len(send_dict)} images to the server...')
+                    ut.print_inf(f'Sending {len(send_dict)} images to the server...')
                     self.service.handle_add_images(send_dict, self.db_name)
                     send_dict = {}
             except Exception as e:
                 ut.print_err(f'Failed to process image {path}: {e}')
 
         if send_dict:
-            print(f'Sending {len(send_dict)} images to the server...')
+            ut.print_inf(f'Sending {len(send_dict)} images to the server...')
             self.service.handle_add_images(send_dict, self.db_name)
 
     def _filter_out_exists(self, imgs: dict[str, str]) -> dict[str, str]:
@@ -109,13 +109,14 @@ class Client:
 
     def add_images(self, paths: list[str], label_type: str = 'path') -> int:
         """Handle adding images to the index using thread pool."""
-        print('Collecting images...')
+        ut.print_inf('Collecting images...')
         pool = ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2))
         found_ipaths: dict[str, str] = {}
         to_added: dict[str, str] = {}
         n_images = 0
 
         for img_path in ut.find_all_images(paths):
+            ut.print_msg(f'Found {img_path}')
             label = img_path.stem if label_type == 'name' else str(img_path.resolve())
             found_ipaths[label] = str(img_path)
 
@@ -138,7 +139,7 @@ class Client:
             pool.submit(self._preprocess_images, to_added)
             n_images += len(to_added)
 
-        print(f'Preprocessing {n_images} images...')
+        ut.print_inf(f'Preprocessing {n_images} images...')
         pool.shutdown(wait=True)
 
         return n_images
@@ -317,34 +318,34 @@ def main() -> None:  # noqa: C901
     elif args.command == 'add':
         client = Client(db_name=args.db_name, bind=args.bind)
         n_added = client.add_images(args.paths, args.label)
-        print(f'Added {n_added} images for processing')
+        ut.print_inf(f'Added {n_added} images for processing')
 
     elif args.command == 'cmp':
         client = Client(bind=args.bind)
         similarity = client.compare_images(args.path1, args.path2)
-        print(f'Similarity between images: {similarity}%')
+        ut.print_inf(f'Similarity between images: {similarity}%')
 
     elif args.command == 'db':
         client = Client(db_name=args.db_name, bind=args.bind)
         if args.list:
             if databases := client.list_dbs():
-                print(ut.colorize('Available databases:', 'blue', True))
+                ut.print_inf('Available databases:', marked=True)
                 for db_name in databases:
-                    print(f'  - {db_name}')
+                    ut.print_inf(f'* {db_name}')
             else:
                 ut.print_warn('No databases found.')
         elif args.info:
             if info := client.get_db_info():
-                print(ut.colorize(f'Database "{args.db_name}"', 'blue', True))
+                ut.print_inf(f'Database "{args.db_name}"', marked=True)
                 for key, value in info.items():
-                    print(f'  - {ut.bold(key.title().replace("_", ""))}: {value}')
+                    ut.print_inf(f'* {ut.bold(key.title().replace("_", ""))}: {value}')
             else:
                 ut.print_err(f'Failed to get database info for "{args.db_name}".')
         elif args.clear:
             notice = ut.colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
                 if client.clear_db():
-                    print(f'Database "{args.db_name}" has been cleared.')
+                    ut.print_inf(f'Database "{args.db_name}" has been cleared.')
                 else:
                     ut.print_err(f'Failed to clear the database "{args.db_name}".')
 
@@ -355,19 +356,19 @@ def main() -> None:  # noqa: C901
             ut.print_err('Error: min_similarity must be between 0 and 100')
             sys.exit(1)
 
-        print(f'Searching {args.target}...')
+        ut.print_inf(f'Searching {args.target}...')
         results = client.search(args.target, args.num, args.min_similarity)
         if results:
-            print(f'Found {len(results)} similar results (similarity ≥ {args.min_similarity}%):')
+            ut.print_inf(f'Found {len(results)} similar images (similarity ≥ {args.min_similarity}%):')
             for i, (path, similarity) in enumerate(results, 1):
-                print(f'{i:2d}. {path}  {similarity}%')
+                ut.print_inf(f'{i:2d}. {path}\t{similarity}%')
 
             if args.open_res:
                 ut.open_images([path for path, _ in results])
         elif results is None:
-            print('Search queue is full, please try again later.')
+            ut.print_inf('Search queue is full, please try again later.')
         else:
-            print('No similar images found.')
+            ut.print_inf('No similar images found.')
 
     else:
         parser.print_help()

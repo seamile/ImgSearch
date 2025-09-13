@@ -16,7 +16,7 @@ from PIL import Image
 
 from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL_KEY, SERVICE_NAME, UNIX_SOCKET
 from imgsearch.storage import VectorDB
-from imgsearch.utils import bold, bytes2img, colorize, get_logger, print_err
+from imgsearch.utils import bold, bytes2img, get_logger, print_err, print_inf
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -481,14 +481,14 @@ class Server:
         try:
             pid = int(pid_file.read_text().strip())
             if cls.is_running(pid):
-                print(colorize('iSearch service is running', 'blue', bold=True))
-                print(f'  {bold("PID")}: {pid}')
+                print_inf('iSearch service is running', marked=True)
+                print_inf(f'* {bold("PID")}: {pid}')
                 try:
                     memory_info = psutil.Process(pid).memory_info()
                     memory_mb = memory_info.rss / 1024 / 1024
-                    print(f'  {bold("MEM")}: {memory_mb:.1f} MB')
+                    print_inf(f'* {bold("MEM")}: {memory_mb:.1f} MB')
                 except Exception as e:
-                    print_err(f'  {bold("MEM")}: unknown ({e})')
+                    print_err(f'* {bold("MEM")}: unknown ({e})')
                 return True
             else:
                 print_err('PID file exists but process is not running')

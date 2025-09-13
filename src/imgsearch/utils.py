@@ -47,14 +47,26 @@ def bold(text: str) -> str:
     return colorize(text, '', True)
 
 
+def print_msg(msg):
+    """Output flash message to stdout"""
+    print(colorize(msg, 'gray'), end='\x1b[K\r', file=sys.stderr)
+
+
+def print_inf(msg, marked=False):
+    """Output info message to stdout"""
+    if marked:
+        msg = colorize(msg, 'blue', bold=True)
+    print(msg, end='\x1b[K\n', file=sys.stderr)
+
+
 def print_warn(msg):
     """Output warning message to stderr"""
-    print(colorize(msg, 'yellow'), file=sys.stderr)
+    print(colorize(msg, 'yellow'), end='\x1b[K\n', file=sys.stderr)
 
 
 def print_err(msg):
     """Output error message to stderr"""
-    print(colorize(msg, 'red'), file=sys.stderr)
+    print(colorize(msg, 'red'), end='\x1b[K\n', file=sys.stderr)
 
 
 def cpu_count() -> int:

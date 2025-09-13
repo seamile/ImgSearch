@@ -170,25 +170,19 @@ class VectorDB:
         if similarity < 0.0 or similarity > 100.0:
             raise ValueError('similarity must be between 0 and 100')
 
-        # If no similarity filtering, use original behavior
-        if similarity == 0.0:
-            search_k = min(k, self.size)
-        else:
-            # Dynamic search with similarity filtering
-            search_k = min(k * 3, self.size)
-        self.index.set_ef(max(search_k * 5, 100))
+        # Set ef to a value between 150 and 300, depending on the number of results requested.
+        # This is to ensure that the search is efficient and fast, without sacrificing accuracy.
+        search_k = min(k, self.size)
+        self.index.set_ef(min(max(search_k * 3, 150), 300))
         v_ids, distances = self.index.knn_query([feature], k=search_k)
 
-        # Convert results to (path, similarity) tuples with filtering
+        # Convert results to (label, similarity) tuples
         results = []
         for vid, distance in zip(v_ids[0], distances[0], strict=True):
-            if vid in self.mapping:
+            if label := self.mapping.get(vid):
                 # Convert distance to similarity
-                res_similarity = round((1.0 - distance) * 100)
+                res_similarity = round((1.0 - distance) * 100, 1)
                 if res_similarity >= similarity:
-                    results.append((self.mapping[vid], res_similarity))
-                    # break if results are enough
-                    if len(results) >= k:
-                        break
+                    results.append((label, res_similarity))
 
-        return results[:k]
+        return results
