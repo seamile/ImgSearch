@@ -5,12 +5,17 @@ Unit tests for utils.py module
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from imgsearch.utils import (
     ColorFormatter,
+    bold,
     bytes2img,
+    colorize,
     find_all_images,
     get_logger,
     ibatch,
@@ -20,7 +25,6 @@ from imgsearch.utils import (
     print_err,
     print_warn,
 )
-from PIL import Image
 
 
 class TestUtils(unittest.TestCase):
@@ -43,6 +47,17 @@ class TestUtils(unittest.TestCase):
         img.save(img_path)
 
         self.assertTrue(is_image(img_path))
+        self.assertTrue(is_image(img_path, ignore_hidden=False))
+
+    def test_is_image_dynamic_extensions(self):
+        """Test is_image uses dynamic PIL extensions"""
+        # Test with various known image extensions
+        extensions = ['.jpg', '.png', '.gif', '.bmp', '.tiff']
+        for ext in extensions:
+            img_path = self.test_dir / f'test{ext}'
+            img = Image.new('RGB', (10, 10), color='red')
+            img.save(img_path)
+            self.assertTrue(is_image(img_path))
 
     def test_is_image_with_non_image_file(self):
         """Test is_image with non-image file"""
@@ -75,21 +90,48 @@ class TestUtils(unittest.TestCase):
         self.assertIsInstance(result, bytes)
         self.assertGreater(len(result), 0)
 
-    def test_img2bytes_with_resize(self):
-        """Test img2bytes with resize parameter"""
-        img = Image.new('RGB', (200, 200), color='green')
-        result = img2bytes(img, resize=100)
+    def test_img2bytes_webp_format(self):
+        """Test img2bytes uses WebP format"""
+        img = Image.new('RGB', (100, 100), color='green')
+        result = img2bytes(img)
 
-        self.assertIsInstance(result, bytes)
-        self.assertGreater(len(result), 0)
+        # Try to open as WebP to verify format
+        webp_img = Image.open(BytesIO(result))
+        self.assertEqual(webp_img.format, 'WEBP')
 
     def test_img2bytes_rgba_conversion(self):
         """Test img2bytes converts RGBA to RGB"""
         img = Image.new('RGBA', (100, 100), color=(255, 0, 0, 128))
         result = img2bytes(img)
 
+        # Verify it's RGB after conversion
+        converted_img = bytes2img(result)
+        self.assertEqual(converted_img.mode, 'RGB')
+
+    def test_img2bytes_resize(self):
+        """Test img2bytes with resize parameter"""
+        img = Image.new('RGB', (200, 200), color='green')
+        result = img2bytes(img, resize=100)
+
+        # Verify image was resized
+        resized_img = bytes2img(result)
+        self.assertLessEqual(resized_img.width, 100)
+        self.assertLessEqual(resized_img.height, 100)
         self.assertIsInstance(result, bytes)
         self.assertGreater(len(result), 0)
+
+    def test_bytes2img_roundtrip(self):
+        """Test bytes2img roundtrip preserves image data"""
+        original_img = Image.new('RGB', (50, 50), color='yellow')
+        img_bytes = img2bytes(original_img)
+
+        # Convert back
+        result_img = bytes2img(img_bytes)
+
+        self.assertIsInstance(result_img, Image.Image)
+        self.assertEqual(result_img.mode, 'RGB')
+        self.assertEqual(result_img.size, original_img.size)
+        self.assertEqual(result_img.tobytes(), original_img.tobytes())
 
     def test_bytes2img(self):
         """Test bytes2img functionality"""
@@ -109,10 +151,15 @@ class TestUtils(unittest.TestCase):
         img = Image.new('RGB', (10, 10), color='red')
         img.save(img_path)
 
-        results = list(find_all_images(str(img_path)))
+        # Test with string path
+        results_str = list(find_all_images(str(img_path)))
+        self.assertEqual(len(results_str), 1)
+        self.assertEqual(results_str[0], img_path)
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0], img_path)
+        # Test with Path object
+        results_path = list(find_all_images(img_path))
+        self.assertEqual(len(results_path), 1)
+        self.assertEqual(results_path[0], img_path)
 
     def test_find_all_images_directory(self):
         """Test find_all_images with directory"""
@@ -125,11 +172,17 @@ class TestUtils(unittest.TestCase):
         Image.new('RGB', (10, 10), color='blue').save(img2)
         txt_file.write_text('Not an image')
 
-        results = list(find_all_images(str(self.test_dir)))
+        # Test with string path
+        results_str = list(find_all_images(str(self.test_dir)))
+        self.assertEqual(len(results_str), 2)
+        self.assertIn(img1, results_str)
+        self.assertIn(img2, results_str)
 
-        self.assertEqual(len(results), 2)
-        self.assertIn(img1, results)
-        self.assertIn(img2, results)
+        # Test with Path object
+        results_path = list(find_all_images(self.test_dir))
+        self.assertEqual(len(results_path), 2)
+        self.assertIn(img1, results_path)
+        self.assertIn(img2, results_path)
 
     def test_find_all_images_recursive(self):
         """Test find_all_images with recursive search"""
@@ -142,11 +195,17 @@ class TestUtils(unittest.TestCase):
         Image.new('RGB', (10, 10), color='red').save(img1)
         Image.new('RGB', (10, 10), color='blue').save(img2)
 
-        results = list(find_all_images(str(self.test_dir), recursively=True))
+        # Test recursive with string
+        results_str = list(find_all_images(str(self.test_dir), recursively=True))
+        self.assertEqual(len(results_str), 2)
+        self.assertIn(img1, results_str)
+        self.assertIn(img2, results_str)
 
-        self.assertEqual(len(results), 2)
-        self.assertIn(img1, results)
-        self.assertIn(img2, results)
+        # Test recursive with Path
+        results_path = list(find_all_images(self.test_dir, recursively=True))
+        self.assertEqual(len(results_path), 2)
+        self.assertIn(img1, results_path)
+        self.assertIn(img2, results_path)
 
     def test_find_all_images_non_recursive(self):
         """Test find_all_images without recursive search"""
@@ -159,11 +218,17 @@ class TestUtils(unittest.TestCase):
         Image.new('RGB', (10, 10), color='red').save(img1)
         Image.new('RGB', (10, 10), color='blue').save(img2)
 
-        results = list(find_all_images(str(self.test_dir), recursively=False))
+        # Test non-recursive with string
+        results_str = list(find_all_images(str(self.test_dir), recursively=False))
+        self.assertEqual(len(results_str), 1)
+        self.assertIn(img1, results_str)
+        self.assertNotIn(img2, results_str)
 
-        self.assertEqual(len(results), 1)
-        self.assertIn(img1, results)
-        self.assertNotIn(img2, results)
+        # Test non-recursive with Path
+        results_path = list(find_all_images(self.test_dir, recursively=False))
+        self.assertEqual(len(results_path), 1)
+        self.assertIn(img1, results_path)
+        self.assertNotIn(img2, results_path)
 
     def test_find_all_images_mixed_paths(self):
         """Test find_all_images with mixed file and directory paths"""
@@ -176,20 +241,33 @@ class TestUtils(unittest.TestCase):
         Image.new('RGB', (10, 10), color='red').save(img_file)
         Image.new('RGB', (10, 10), color='blue').save(nested_img)
 
-        paths = [str(img_file), str(sub_dir)]
-        results = list(find_all_images(paths))
+        # Test mixed string and Path inputs
+        paths_mixed = [str(img_file), sub_dir]
+        results_mixed = list(find_all_images(paths_mixed))
+        self.assertEqual(len(results_mixed), 2)
+        self.assertIn(img_file, results_mixed)
+        self.assertIn(nested_img, results_mixed)
 
-        self.assertEqual(len(results), 2)
-        self.assertIn(img_file, results)
-        self.assertIn(nested_img, results)
+        # Test error handling for nonexistent path
+        with patch('imgsearch.utils.print_err') as mock_print_err:
+            nonexistent_results = list(find_all_images(self.test_dir / 'nonexistent'))
+            mock_print_err.assert_called_once()
+            self.assertEqual(len(nonexistent_results), 0)
 
-    def test_find_all_images_nonexistent_path(self):
-        """Test find_all_images with nonexistent path"""
-        nonexistent = self.test_dir / 'nonexistent'
+    def test_find_all_images_hidden_files(self):
+        """Test find_all_images with hidden files"""
+        # Create hidden image
+        hidden_img = self.test_dir / '.hidden.jpg'
+        img = Image.new('RGB', (10, 10), color='red')
+        img.save(hidden_img)
 
-        results = list(find_all_images(str(nonexistent)))
+        # Default should ignore hidden
+        results_default = list(find_all_images(self.test_dir))
+        self.assertNotIn(hidden_img, results_default)
 
-        self.assertEqual(len(results), 0)
+        # Explicit ignore_hidden=False should include
+        results_include = list(find_all_images(self.test_dir, ignore_hidden=False))
+        self.assertIn(hidden_img, results_include)
 
     def test_ibatch_basic(self):
         """Test ibatch basic functionality"""
@@ -201,6 +279,33 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(batches[1], [4, 5, 6])
         self.assertEqual(batches[2], [7, 8, 9])
         self.assertEqual(batches[3], [10])
+
+    def test_colorize_function(self):
+        """Test colorize function with different colors"""
+        test_text = 'test message'
+
+        # Test different colors
+        red = colorize(test_text, 'red')
+        green = colorize(test_text, 'green')
+        self.assertRegex(red, r'\x1b\[(?:\d{1,2};)*31m')
+        self.assertRegex(green, r'\x1b\[(?:\d{1,2};)*32m')
+        self.assertIn(test_text, red)
+        self.assertIn(test_text, green)
+
+        # Test bold
+        bold_text = colorize(test_text, bold=True)
+        self.assertIn('\x1b[1m', bold_text)
+
+        # Test default (no color)
+        plain = colorize(test_text)
+        self.assertIn(test_text, plain)
+
+    def test_bold_function(self):
+        """Test bold function"""
+        test_text = 'bold text'
+        result = bold(test_text)
+        self.assertIn('\x1b[1m', result)
+        self.assertIn(test_text, result)
 
     def test_ibatch_exact_multiple(self):
         """Test ibatch with exact multiple batch size"""

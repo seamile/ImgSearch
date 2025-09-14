@@ -6,7 +6,6 @@ selection (CUDA/MPS/CPU), batch processing, and thread-safe concurrent
 preprocessing. Features are normalized to unit length for cosine similarity.
 """
 
-import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -16,11 +15,6 @@ from PIL import Image
 
 from imgsearch.consts import DEFAULT_MODEL_KEY, MODELS
 from imgsearch.utils import Feature, cpu_count
-
-# Suppress verbose transformers logging
-for name, logger in logging.Logger.manager.loggerDict.items():
-    if name.startswith('transformers.') and isinstance(logger, logging.Logger):
-        logger.setLevel(logging.ERROR)
 
 
 class Clip:

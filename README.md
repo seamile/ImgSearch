@@ -1,8 +1,8 @@
-# iSearch 图片搜索引擎
+# ImgSearch 图片搜索引擎
 
-[🇨🇳 中文](#isearch-图片搜索引擎) ⇌ [🇬🇧 English](#isearch)
+[🇨🇳 中文](#imgsearch-图片搜索引擎) ⇌ [🇬🇧 English](#imgsearch)
 
-iSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描述搜图。基于 TinyCLIP（OpenCLIP 兼容）和 HNSWlib 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
+ImgSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描述搜图。基于 TinyCLIP（OpenCLIP 兼容）和 HNSWlib 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
 
 ## 特性
 
@@ -29,29 +29,17 @@ pip install imgsearch
 # macOS Intel/Apple Silicon 或 Linux CPU
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-# 然后安装 iSearch
+# 然后安装 ImgSearch
 pip install imgsearch
 ```
 
-**注意**：iSearch 使用 TinyCLIP 模型（基于 OpenCLIP），兼容 CPU/GPU。GPU 用户可直接安装标准 PyTorch（`pip install torch torchvision`）以加速推理。
-
-### 开发安装（可选）
-
-若需贡献代码或运行测试：
-
-```shell
-git clone https://github.com/your-repo/isearch.git  # 替换为实际仓库
-cd isearch
-pip install -e .[dev]
-```
-
-依赖包括：PyTorch, OpenCLIP (TinyCLIP), HNSWlib, Pyro5, Pillow, psutil 等。完整列表见 [pyproject.toml](pyproject.toml)。
+**注意**：ImgSearch 使用 TinyCLIP 模型（基于 OpenCLIP），兼容 CPU/GPU。GPU 用户可直接安装标准 PyTorch（`pip install torch torchvision`）以加速推理。
 
 ## 快速开始
 
 ### 1. 服务管理
 
-iSearch 使用后台服务处理索引和搜索。服务支持 Unix 域套接字（默认，本地高效）或 TCP 绑定。
+ImgSearch 使用后台服务处理索引和搜索。服务支持 Unix 域套接字（默认，本地高效）或 TCP 绑定。
 
 #### 启动服务
 
@@ -102,11 +90,13 @@ isearch add -l name ./images/
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
-添加后，图片会被转换为 384x384 WebP 并提取 TinyCLIP 特征（512 维向量），存储在 HNSW 索引中。批量处理（默认 100 张/批），支持数万张图片。
+添加后，图片会被转换为 384x384 并提取 TinyCLIP 特征（512 维向量），存储在 HNSW 索引中。
 
 ### 3. 搜索图片
 
-搜索使用 `search` 子命令，但它是默认行为：若未指定子命令且参数不匹配其他命令，则自动视为搜索。语法：`isearch [search] QUERY`（`[search]` 可选）。
+搜索图片使用 `search` 子命令，为了操作方便，isearch 已将它设为默认子命令，使用时可以省略。
+
+搜图语法：`isearch [search] QUERY`（`[search]` 可选）。
 
 #### 以图搜图
 
@@ -208,7 +198,7 @@ Similarity between images: 87.5%
 
 ## 作为 Python 模块使用
 
-iSearch 可导入为库，直接操作服务或独立使用（但推荐服务模式以支持并发）。
+ImgSearch 可导入为库，直接操作服务或独立使用（但推荐服务模式以支持并发）。
 
 ```python
 from imgsearch.client import Client
@@ -254,7 +244,7 @@ print(f'清空成功: {cleared}')
 
 ## 模型选择指南
 
-iSearch 支持多种 TinyCLIP 模型变体，平衡速度、准确率和资源。默认 `ViT-45LY` 适用于大多数场景。
+ImgSearch 支持多种 TinyCLIP 模型变体，平衡速度、准确率和资源。默认 `ViT-45LY` 适用于大多数场景。
 
 | 模型键   | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | 推荐场景                    |
 |----------|-----------------------|----------|----------------------|-----------------------------|
@@ -319,7 +309,6 @@ pytest src/test/
 - pyro5 >=5.15
 - Pillow >=11.3.0
 - psutil >=7.0.0
-- transformers >=4.56.1
 - bidict >=0.23.1
 - msgpack >=1.1.1
 - numpy (平台特定)
@@ -330,11 +319,11 @@ MIT License
 
 ---
 
-# iSearch
+# ImgSearch
 
-[🇬🇧 English](#isearch) ⇌ [🇨🇳 中文](#isearch-图片搜索引擎)
+[🇬🇧 English](#imgsearch) ⇌ [🇨🇳 中文](#imgsearch-图片搜索引擎)
 
-iSearch is a lightweight image search engine supporting image-to-image and text-to-image search. Built on TinyCLIP (OpenCLIP-compatible) and HNSWlib, it's fast and resource-efficient, running on 2GB RAM devices. Use standalone or integrate as a Python library.
+ImgSearch is a lightweight image search engine supporting image-to-image and text-to-image search. Built on TinyCLIP (OpenCLIP-compatible) and HNSWlib, it's fast and resource-efficient, running on 2GB RAM devices. Use standalone or integrate as a Python library.
 
 ## Features
 
@@ -361,29 +350,17 @@ For CPU-only setups (e.g., no NVIDIA GPU on macOS/server):
 # Install CPU PyTorch first
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-# Then install iSearch
+# Then install ImgSearch
 pip install imgsearch
 ```
 
-**Note**: iSearch uses TinyCLIP models (OpenCLIP-based), compatible with CPU/GPU. GPU users: Install standard PyTorch (`pip install torch torchvision`) for acceleration.
-
-### Development Installation (Optional)
-
-For contributions or testing:
-
-```shell
-git clone https://github.com/your-repo/isearch.git  # Replace with actual repo
-cd isearch
-pip install -e .[dev]
-```
-
-Dependencies: PyTorch, OpenCLIP (TinyCLIP), HNSWlib, Pyro5, Pillow, psutil, etc. Full list in [pyproject.toml](pyproject.toml).
+**Note**: ImgSearch uses TinyCLIP models (OpenCLIP-based), compatible with CPU/GPU. GPU users: Install standard PyTorch (`pip install torch torchvision`) for acceleration.
 
 ## Quick Start
 
 ### 1. Service Management
 
-iSearch runs as a background service for indexing/search. Supports Unix domain sockets (default, local-efficient) or TCP binding.
+ImgSearch runs as a background service for indexing/search. Supports Unix domain sockets (default, local-efficient) or TCP binding.
 
 #### Start Service
 
@@ -434,11 +411,13 @@ isearch add -l name ./images/
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
-Images converted to 384x384 WebP, extract TinyCLIP features (512-dim vectors), stored in HNSW index. Batch processing (default 100/batch), handles tens of thousands.
+Images converted to 384x384, extract TinyCLIP features (512-dim vectors), stored in HNSW index.
 
 ### 3. Search Images
 
-Search uses `search` subcommand, but it's the default: if no subcommand specified and args don't match others, auto-treated as search. Syntax: `isearch [search] QUERY` (`[search]` optional).
+Search images uses the `search` subcommand, but for operational convenience, iSearch has set it as the default subcommand, which can be omitted during use. If no subcommand is specified and the arguments don't match other commands, it will be automatically treated as a search.
+
+Search images syntax: `isearch [search] QUERY` (`[search]` optional).
 
 #### Image-to-Image Search
 
@@ -586,7 +565,7 @@ print(f'Cleared: {cleared}')
 
 ## Model Selection Guide
 
-iSearch supports various TinyCLIP model variants, balancing speed, accuracy, resources. Default `ViT-45LY` for most cases.
+ImgSearch supports various TinyCLIP model variants, balancing speed, accuracy, resources. Default `ViT-45LY` for most cases.
 
 | Model Key | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | Recommended For                     |
 |-----------|-----------------------|----------|----------------------|-------------------------------------|
@@ -651,7 +630,6 @@ Follow style, use modern Python (>=3.11). See [CONTRIBUTING.md] if available.
 - pyro5 >=5.15
 - Pillow >=11.3.0
 - psutil >=7.0.0
-- transformers >=4.56.1
 - bidict >=0.23.1
 - msgpack >=1.1.1
 - numpy (platform-specific)

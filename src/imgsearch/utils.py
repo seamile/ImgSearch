@@ -179,6 +179,7 @@ def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
 def open_images(paths: Sequence[str | Path]):
     """Open images with system default image viewer"""
     system = platform.system()
+    paths = [str(path) for path in paths if is_image(Path(path))]
     try:
         if system == 'Windows':
             subprocess.run(['explorer', *paths])
