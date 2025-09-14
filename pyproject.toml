@@ -1,6 +1,6 @@
 [project]
 name = "imgsearch"
-version = "0.1.1"
+version = "0.2.0"
 description = "ImgSearch is a lightweight image search engine that supports searching images by image."
 readme = "README.md"
 authors = [
@@ -14,8 +14,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: SCIENCE :: Artificial Intelligence :: Image Recognition",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
 ]

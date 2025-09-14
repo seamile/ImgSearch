@@ -7,6 +7,7 @@ preprocessing. Features are normalized to unit length for cosine similarity.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from functools import cached_property
 
 import numpy as np
 import torch
@@ -60,14 +61,12 @@ class Clip:
         if self.device.type == 'mps':
             self.model = self.model.float()
 
-        # Lazy thread pool for image preprocessing (I/O bound)
-        self._executor: ThreadPoolExecutor | None = None
-
     def __del__(self):
-        if self._executor is not None:
-            self._executor.shutdown(wait=False)
+        if 'executor' in self.__dict__:
+            self.executor.shutdown(wait=False)
+            del self.executor
 
-    @property
+    @cached_property
     def executor(self) -> ThreadPoolExecutor:
         """Get thread pool executor for concurrent preprocessing (lazy init).
 
@@ -77,9 +76,7 @@ class Clip:
         Returns:
             ThreadPoolExecutor: Configured executor instance.
         """
-        if self._executor is None:
-            self._executor = ThreadPoolExecutor(max_workers=max(cpu_count(), 2))
-        return self._executor
+        return ThreadPoolExecutor(max_workers=max(cpu_count(), 2))
 
     @staticmethod
     def get_device(name: str | None = None) -> torch.device:

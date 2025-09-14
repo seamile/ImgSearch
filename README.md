@@ -192,7 +192,7 @@ Similarity between images: 87.5%
 全局参数（适用于所有子命令）：
 - `-d DB_NAME`：指定数据库名称（默认：`default`）
 - `-B BIND`：服务绑定地址（默认：`~/.isearch/isearch.sock`；TCP 格式：`host:port`）
-- `-v, --version`：显示版本（当前：0.1.1）
+- `-v, --version`：显示版本（当前：0.2.0）
 
 子命令特定参数见上文。
 
@@ -246,19 +246,19 @@ print(f'清空成功: {cleared}')
 
 ImgSearch 支持多种 TinyCLIP 模型变体，平衡速度、准确率和资源。默认 `ViT-45LY` 适用于大多数场景。
 
-| 模型键   | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | 推荐场景                    |
-|----------|-----------------------|----------|----------------------|-----------------------------|
-| ViT-8Y   | 41.1                  | 2.0      | 4,150                | 移动/低资源，快速但基本准确 |
-| RN-19L   | 56.4                  | 4.4      | 3,024                | 平衡，CPU 友好              |
-| ViT-22L  | 53.7                  | 1.9      | 5,504                | 高速搜索                    |
-| RN-30L   | 59.1                  | 6.9      | 1,811                | 中等准确，GPU 加速          |
-| ViT-39Y  | 63.5                  | 9.5      | 1,469                | 高准确，大型数据集          |
-| ViT-40L  | 59.8                  | 3.5      | 4,641                | 通用桌面                    |
-| ViT-45L  | 61.4                  | 3.7      | 3,682                | 平衡（默认备选）            |
-| ViT-45LY | 62.7                  | 1.9      | 3,685                | **默认：最佳平衡**          |
-| ViT-61L  | 62.4                  | 5.3      | 3,191                | 高准确，中等速度            |
-| ViT-63L  | 63.9                  | 5.6      | 2,905                | 生产环境，高召回            |
-| ViT-63LY | 64.5                  | 5.6      | 2,909                | 最高准确，资源密集          |
+| 模型键   | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | 推荐场景                           |
+|----------|-----------------------|----------|----------------------|------------------------------------|
+| ViT-8Y   | 41.1                  | 2.0      | 4,150                | 资源消耗最低，速度快，准确度略低   |
+| RN-19L   | 56.4                  | 4.4      | 3,024                |                                    |
+| ViT-22L  | 53.7                  | 1.9      | 5,504                | 速度最快，适合对速度要求高的场景   |
+| RN-30L   | 59.1                  | 6.9      | 1,811                |                                    |
+| ViT-39Y  | 63.5                  | 9.5      | 1,469                | 准确度高，资源消耗中等，但速度较慢 |
+| ViT-40L  | 59.8                  | 3.5      | 4,641                |                                    |
+| ViT-45L  | 61.4                  | 3.7      | 3,682                |                                    |
+| ViT-45LY | 62.7                  | 1.9      | 3,685                | **默认：最佳均衡**，速度与精度兼备 |
+| ViT-61L  | 62.4                  | 5.3      | 3,191                |                                    |
+| ViT-63L  | 63.9                  | 5.6      | 2,905                |                                    |
+| ViT-63LY | 64.5                  | 5.6      | 2,909                | 准确度最高                         |
 
 数据来源：TinyCLIP 模型库。选择小模型（如 ViT-8Y）用于低端设备；大模型（如 ViT-63LY）用于高精度需求。切换模型需重启服务：`isearch service start -m MODEL_KEY`。
 
@@ -277,41 +277,6 @@ src/imgsearch/
 ```
 
 测试目录：`src/test/`（包含单元测试，使用 pytest）。
-
-## 性能和故障排除
-
-- **内存使用**：空数据库 ~50MB；每 1000 张图片 ~20-50MB（取决于模型）。服务启动后预加载模型，初始 ~200-500MB。
-- **搜索速度**：~1-5ms/查询（取决于 k 和 ef 参数，CPU 上）。
-- **常见问题**：
-  - 服务未运行：`Failed to connect to service` - 运行 `isearch service start`。
-  - 队列满：高负载时搜索返回 None - 等待或增加并发（修改 server.py）。
-  - 模型加载慢：首次启动预加载，GPU 加速显著。
-  - 数据库损坏：删除 `~/.isearch/数据库名/` 重建。
-
-监控：使用 `isearch service status` 查看 PID 和内存。
-
-## 贡献和测试
-
-欢迎贡献！运行测试：
-
-```shell
-pytest src/test/
-```
-
-确保代码风格一致，使用现代 Python（>=3.11）。详见 [贡献指南](CONTRIBUTING.md)（若存在）。
-
-## 依赖
-
-- Python >=3.11
-- torch >=2.2.2 (CPU/GPU)
-- open-clip-torch (TinyCLIP)
-- hnswlib >=0.8.0
-- pyro5 >=5.15
-- Pillow >=11.3.0
-- psutil >=7.0.0
-- bidict >=0.23.1
-- msgpack >=1.1.1
-- numpy (平台特定)
 
 ## 许可证
 
@@ -513,7 +478,7 @@ Similarity between images: 87.5%
 Global args (all subcommands):
 - `-d DB_NAME`: Database name (default: `default`)
 - `-B BIND`: Service bind (default: `~/.isearch/isearch.sock`; TCP: `host:port`)
-- `-v, --version`: Show version (current: 0.1.1)
+- `-v, --version`: Show version
 
 Subcommand-specific: See above.
 
@@ -567,21 +532,21 @@ print(f'Cleared: {cleared}')
 
 ImgSearch supports various TinyCLIP model variants, balancing speed, accuracy, resources. Default `ViT-45LY` for most cases.
 
-| Model Key | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | Recommended For                     |
-|-----------|-----------------------|----------|----------------------|-------------------------------------|
-| ViT-8Y    | 41.1                  | 2.0      | 4,150                | Mobile/low-resource, fast but basic |
-| RN-19L    | 56.4                  | 4.4      | 3,024                | Balanced, CPU-friendly              |
-| ViT-22L   | 53.7                  | 1.9      | 5,504                | High-speed search                   |
-| RN-30L    | 59.1                  | 6.9      | 1,811                | Medium accuracy, GPU                |
-| ViT-39Y   | 63.5                  | 9.5      | 1,469                | High accuracy, large data           |
-| ViT-40L   | 59.8                  | 3.5      | 4,641                | General desktop                     |
-| ViT-45L   | 61.4                  | 3.7      | 3,682                | Balanced (default alt)              |
-| ViT-45LY  | 62.7                  | 1.9      | 3,685                | **Default: Best balance**           |
-| ViT-61L   | 62.4                  | 5.3      | 3,191                | High accuracy, medium speed         |
-| ViT-63L   | 63.9                  | 5.6      | 2,905                | Production, high recall             |
-| ViT-63LY  | 64.5                  | 5.6      | 2,909                | Highest accuracy, intensive         |
+| Model Key | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | Recommended Scenarios                                                 |
+|-----------|-----------------------|----------|----------------------|-----------------------------------------------------------------------|
+| ViT-8Y    | 41.1                  | 2.0      | 4,150                | Lowest resource usage, fast performance, with slightly lower accuracy |
+| RN-19L    | 56.4                  | 4.4      | 3,024                |                                                                       |
+| ViT-22L   | 53.7                  | 1.9      | 5,504                | Fastest speed, ideal for scenarios with high speed requirements       |
+| RN-30L    | 59.1                  | 6.9      | 1,811                |                                                                       |
+| ViT-39Y   | 63.5                  | 9.5      | 1,469                | High accuracy, moderate resource consumption, but slower speed        |
+| ViT-40L   | 59.8                  | 3.5      | 4,641                |                                                                       |
+| ViT-45L   | 61.4                  | 3.7      | 3,682                |                                                                       |
+| ViT-45LY  | 62.7                  | 1.9      | 3,685                | **Default: Best balance** of speed and accuracy                       |
+| ViT-61L   | 62.4                  | 5.3      | 3,191                |                                                                       |
+| ViT-63L   | 63.9                  | 5.6      | 2,905                |                                                                       |
+| ViT-63LY  | 64.5                  | 5.6      | 2,909                | Highest accuracy                                                      |
 
-Data from TinyCLIP model zoo. Use small models (ViT-8Y) for low-end; large (ViT-63LY) for precision. Switch: `isearch service start -m MODEL_KEY`.
+Data source: TinyCLIP model library. Choose small models (e.g., ViT-8Y) for low-end devices; large models (e.g., ViT-63LY) for high-precision needs. To switch models, restart the service: `isearch service start -m MODEL_KEY`.
 
 ## Directory Structure
 
@@ -598,41 +563,6 @@ src/imgsearch/
 ```
 
 Tests: `src/test/` (unit tests with pytest).
-
-## Performance and Troubleshooting
-
-- **Memory**: Empty DB ~50MB; per 1000 images ~20-50MB (model-dependent). Service preload ~200-500MB initial.
-- **Search Speed**: ~1-5ms/query (depends on k, ef; CPU).
-- **Common Issues**:
-  - Service not running: `Failed to connect` - Run `isearch service start`.
-  - Queue full: Search returns None (high load) - Wait or increase concurrency (edit server.py).
-  - Slow model load: First start preloads; GPU speeds up.
-  - Corrupt DB: Delete `~/.isearch/db_name/` and rebuild.
-
-Monitor: `isearch service status` for PID/memory.
-
-## Contributions and Testing
-
-Contributions welcome! Run tests:
-
-```shell
-pytest src/test/
-```
-
-Follow style, use modern Python (>=3.11). See [CONTRIBUTING.md] if available.
-
-## Dependencies
-
-- Python >=3.11
-- torch >=2.2.2 (CPU/GPU)
-- open-clip-torch (TinyCLIP)
-- hnswlib >=0.8.0
-- pyro5 >=5.15
-- Pillow >=11.3.0
-- psutil >=7.0.0
-- bidict >=0.23.1
-- msgpack >=1.1.1
-- numpy (platform-specific)
 
 ## License
 

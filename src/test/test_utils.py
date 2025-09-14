@@ -26,6 +26,14 @@ from imgsearch.utils import (
     print_warn,
 )
 
+# Constants for testing
+TEST_IMAGE_SIZE_SMALL = (10, 10)  # Small test image size
+TEST_IMAGE_SIZE_MEDIUM = (100, 100)  # Medium test image size
+TEST_IMAGE_SIZE_LARGE = (200, 200)  # Large test image size
+TEST_COLOR_RED = 'red'  # Red color for testing
+TEST_COLOR_BLUE = 'blue'  # Blue color for testing
+TEST_COLOR_GREEN = 'green'  # Green color for testing
+
 
 class TestUtils(unittest.TestCase):
     """Test class for utility functions"""
@@ -43,7 +51,7 @@ class TestUtils(unittest.TestCase):
         """Test is_image with valid image file"""
         # Create a test image
         img_path = self.test_dir / 'test.jpg'
-        img = Image.new('RGB', (10, 10), color='red')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
         img.save(img_path)
 
         self.assertTrue(is_image(img_path))
@@ -55,7 +63,7 @@ class TestUtils(unittest.TestCase):
         extensions = ['.jpg', '.png', '.gif', '.bmp', '.tiff']
         for ext in extensions:
             img_path = self.test_dir / f'test{ext}'
-            img = Image.new('RGB', (10, 10), color='red')
+            img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
             img.save(img_path)
             self.assertTrue(is_image(img_path))
 
@@ -69,7 +77,7 @@ class TestUtils(unittest.TestCase):
     def test_is_image_with_hidden_file(self):
         """Test is_image with hidden file"""
         hidden_path = self.test_dir / '.hidden.jpg'
-        img = Image.new('RGB', (10, 10), color='red')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
         img.save(hidden_path)
 
         self.assertFalse(is_image(hidden_path, ignore_hidden=True))
@@ -84,7 +92,7 @@ class TestUtils(unittest.TestCase):
 
     def test_img2bytes_basic(self):
         """Test img2bytes basic functionality"""
-        img = Image.new('RGB', (100, 100), color='blue')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_MEDIUM, color=TEST_COLOR_BLUE)
         result = img2bytes(img)
 
         self.assertIsInstance(result, bytes)
@@ -92,7 +100,7 @@ class TestUtils(unittest.TestCase):
 
     def test_img2bytes_webp_format(self):
         """Test img2bytes uses WebP format"""
-        img = Image.new('RGB', (100, 100), color='green')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_MEDIUM, color=TEST_COLOR_GREEN)
         result = img2bytes(img)
 
         # Try to open as WebP to verify format
@@ -101,7 +109,7 @@ class TestUtils(unittest.TestCase):
 
     def test_img2bytes_rgba_conversion(self):
         """Test img2bytes converts RGBA to RGB"""
-        img = Image.new('RGBA', (100, 100), color=(255, 0, 0, 128))
+        img = Image.new('RGBA', TEST_IMAGE_SIZE_MEDIUM, color=(255, 0, 0, 128))
         result = img2bytes(img)
 
         # Verify it's RGB after conversion
@@ -110,7 +118,7 @@ class TestUtils(unittest.TestCase):
 
     def test_img2bytes_resize(self):
         """Test img2bytes with resize parameter"""
-        img = Image.new('RGB', (200, 200), color='green')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_LARGE, color=TEST_COLOR_GREEN)
         result = img2bytes(img, resize=100)
 
         # Verify image was resized
@@ -148,7 +156,7 @@ class TestUtils(unittest.TestCase):
     def test_find_all_images_single_file(self):
         """Test find_all_images with single image file"""
         img_path = self.test_dir / 'single.jpg'
-        img = Image.new('RGB', (10, 10), color='red')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
         img.save(img_path)
 
         # Test with string path
@@ -168,8 +176,8 @@ class TestUtils(unittest.TestCase):
         img2 = self.test_dir / 'img2.png'
         txt_file = self.test_dir / 'readme.txt'
 
-        Image.new('RGB', (10, 10), color='red').save(img1)
-        Image.new('RGB', (10, 10), color='blue').save(img2)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED).save(img1)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_BLUE).save(img2)
         txt_file.write_text('Not an image')
 
         # Test with string path
@@ -192,8 +200,8 @@ class TestUtils(unittest.TestCase):
         img1 = self.test_dir / 'root.jpg'
         img2 = sub_dir / 'nested.png'
 
-        Image.new('RGB', (10, 10), color='red').save(img1)
-        Image.new('RGB', (10, 10), color='blue').save(img2)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED).save(img1)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_BLUE).save(img2)
 
         # Test recursive with string
         results_str = list(find_all_images(str(self.test_dir), recursively=True))
@@ -215,8 +223,8 @@ class TestUtils(unittest.TestCase):
         img1 = self.test_dir / 'root.jpg'
         img2 = sub_dir / 'nested.png'
 
-        Image.new('RGB', (10, 10), color='red').save(img1)
-        Image.new('RGB', (10, 10), color='blue').save(img2)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED).save(img1)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_BLUE).save(img2)
 
         # Test non-recursive with string
         results_str = list(find_all_images(str(self.test_dir), recursively=False))
@@ -238,8 +246,8 @@ class TestUtils(unittest.TestCase):
         sub_dir.mkdir()
         nested_img = sub_dir / 'nested.png'
 
-        Image.new('RGB', (10, 10), color='red').save(img_file)
-        Image.new('RGB', (10, 10), color='blue').save(nested_img)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED).save(img_file)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_BLUE).save(nested_img)
 
         # Test mixed string and Path inputs
         paths_mixed = [str(img_file), sub_dir]
@@ -249,16 +257,19 @@ class TestUtils(unittest.TestCase):
         self.assertIn(nested_img, results_mixed)
 
         # Test error handling for nonexistent path
-        with patch('imgsearch.utils.print_err') as mock_print_err:
+        with patch('builtins.print') as mock_print:
             nonexistent_results = list(find_all_images(self.test_dir / 'nonexistent'))
-            mock_print_err.assert_called_once()
+            mock_print.assert_called_once()
+            args, kwargs = mock_print.call_args
+            self.assertIn('is not a file or directory', str(args[0]))
+            self.assertEqual(kwargs.get('file'), sys.stderr)
             self.assertEqual(len(nonexistent_results), 0)
 
     def test_find_all_images_hidden_files(self):
         """Test find_all_images with hidden files"""
         # Create hidden image
         hidden_img = self.test_dir / '.hidden.jpg'
-        img = Image.new('RGB', (10, 10), color='red')
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
         img.save(hidden_img)
 
         # Default should ignore hidden
@@ -406,10 +417,19 @@ class TestUtils(unittest.TestCase):
         """Test open_images on Windows"""
         mock_system.return_value = 'Windows'
 
-        paths = ['image1.jpg', 'image2.png']
+        # Create actual image files so is_image() returns True
+        img1_path = self.test_dir / 'image1.jpg'
+        img2_path = self.test_dir / 'image2.png'
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
+        img.save(img1_path)
+        img.save(img2_path)
+
+        paths = [img1_path, img2_path]
         open_images(paths)
 
-        mock_run.assert_called_once_with(['explorer', *paths])
+        # The function converts Path objects to strings
+        expected_paths = [str(img1_path), str(img2_path)]
+        mock_run.assert_called_once_with(['explorer', *expected_paths])
 
     @patch('platform.system')
     @patch('subprocess.run')
@@ -417,10 +437,19 @@ class TestUtils(unittest.TestCase):
         """Test open_images on macOS"""
         mock_system.return_value = 'Darwin'
 
-        paths = ['image1.jpg', 'image2.png']
+        # Create actual image files so is_image() returns True
+        img1_path = self.test_dir / 'image1.jpg'
+        img2_path = self.test_dir / 'image2.png'
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
+        img.save(img1_path)
+        img.save(img2_path)
+
+        paths = [img1_path, img2_path]
         open_images(paths)
 
-        mock_run.assert_called_once_with(['open', *paths])
+        # The function converts Path objects to strings
+        expected_paths = [str(img1_path), str(img2_path)]
+        mock_run.assert_called_once_with(['open', *expected_paths])
 
     @patch('platform.system')
     @patch('subprocess.run')
@@ -428,10 +457,19 @@ class TestUtils(unittest.TestCase):
         """Test open_images on Linux"""
         mock_system.return_value = 'Linux'
 
-        paths = ['image1.jpg', 'image2.png']
+        # Create actual image files so is_image() returns True
+        img1_path = self.test_dir / 'image1.jpg'
+        img2_path = self.test_dir / 'image2.png'
+        img = Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED)
+        img.save(img1_path)
+        img.save(img2_path)
+
+        paths = [img1_path, img2_path]
         open_images(paths)
 
-        mock_run.assert_called_once_with(['xdg-open', *paths])
+        # The function converts Path objects to strings
+        expected_paths = [str(img1_path), str(img2_path)]
+        mock_run.assert_called_once_with(['xdg-open', *expected_paths])
 
     @patch('platform.system')
     @patch('subprocess.run')
@@ -440,15 +478,18 @@ class TestUtils(unittest.TestCase):
         mock_system.return_value = 'Linux'
         mock_run.side_effect = Exception('Command not found')
 
-        with patch('imgsearch.utils.print_err') as mock_print_err:
+        with patch('builtins.print') as mock_print:
             open_images(['test.jpg'])
-            mock_print_err.assert_called_once()
+            mock_print.assert_called_once()
+            args, kwargs = mock_print.call_args
+            self.assertIn('Failed to open images', str(args[0]))
+            self.assertEqual(kwargs.get('file'), sys.stderr)
 
     def test_path_types(self):
         """Test functions work with both string and Path objects"""
         # Create test image
         img_path = self.test_dir / 'test.jpg'
-        Image.new('RGB', (10, 10), color='red').save(img_path)
+        Image.new('RGB', TEST_IMAGE_SIZE_SMALL, color=TEST_COLOR_RED).save(img_path)
 
         # Test with string path
         str_results = list(find_all_images(str(img_path)))
