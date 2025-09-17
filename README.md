@@ -192,7 +192,7 @@ Similarity between images: 87.5%
 全局参数（适用于所有子命令）：
 - `-d DB_NAME`：指定数据库名称（默认：`default`）
 - `-B BIND`：服务绑定地址（默认：`~/.isearch/isearch.sock`；TCP 格式：`host:port`）
-- `-v, --version`：显示版本（当前：0.2.0）
+- `-v, --version`：显示版本
 
 子命令特定参数见上文。
 
@@ -479,7 +479,7 @@ Similarity between images: 87.5%
 Global parameters (applicable to all subcommands):
 - `-d DB_NAME`: Specify database name (default: `default`)
 - `-B BIND`: Service bind address (default: `~/.isearch/isearch.sock`; TCP format: `host:port`)
-- `-v, --version`: Display version (current: 0.2.0)
+- `-v, --version`: Display version
 
 Subcommand-specific: See above.
 
