@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from imgsearch.consts import BASE_DIR
+from imgsearch.config import BASE_DIR
 
 EXTENSIONS = Image.registered_extensions().keys()
 

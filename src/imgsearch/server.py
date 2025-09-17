@@ -14,13 +14,13 @@ import psutil
 import Pyro5.server
 from PIL import Image
 
-from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL_KEY, SERVICE_NAME, UNIX_SOCKET
+from imgsearch import config as cfg
 from imgsearch.storage import VectorDB
 from imgsearch.utils import bold, bytes2img, get_logger, print_err, print_inf
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
-BASE_DIR.mkdir(parents=True, exist_ok=True)
+cfg.BASE_DIR.mkdir(parents=True, exist_ok=True)
 NETLOC = re.compile(r'^(?P<host>[^:]+):(?P<port>\d+)$')
 
 
@@ -34,7 +34,12 @@ class RPCService:
     All methods are thread-safe using a simple lock.
     """
 
-    def __init__(self, base_dir: Path = BASE_DIR, model_key: str = DEFAULT_MODEL_KEY, logger=None):
+    def __init__(
+        self,
+        base_dir: Path = cfg.BASE_DIR,
+        model_key: str = cfg.DEFAULT_MODEL_KEY,
+        logger=None,
+    ):
         """
         Initialize the RPC service with async processing.
 
@@ -50,12 +55,12 @@ class RPCService:
         self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
         # Async processing queue - now includes db_name
-        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=BATCH_SIZE * 3)
+        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
         # Search concurrency control
-        self.max_concurrent_searches = max(2, BATCH_SIZE // 2)
+        self.max_concurrent_searches = max(2, cfg.BATCH_SIZE // 2)
         self.search_semaphore = threading.Semaphore(self.max_concurrent_searches)
 
     @cached_property
@@ -65,14 +70,14 @@ class RPCService:
 
         return Clip(model_key=self.model_key)
 
-    def _get_db(self, db_name: str = DB_NAME):
+    def _get_db(self, db_name: str = cfg.DB_NAME):
         """Get database instance"""
         if db_name not in self.databases:
             self.logger.debug(f'Loading database: {db_name}')
             self.databases[db_name] = VectorDB(db_name, self.base_dir)
         return self.databases[db_name]
 
-    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = DB_NAME) -> list[bool]:
+    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = cfg.DB_NAME) -> list[bool]:
         """Check if multiple labels exist in the database"""
         db = self._get_db(db_name)
         return db.has_labels(*labels)
@@ -108,7 +113,7 @@ class RPCService:
                 batch_labels.append(label)
 
                 # Process batch when full
-                if len(batch_images) >= BATCH_SIZE:
+                if len(batch_images) >= cfg.BATCH_SIZE:
                     self._process_images(batch_images, batch_labels, db_name)
                     batches[db_name] = ([], [])
 
@@ -119,7 +124,7 @@ class RPCService:
                         self._process_images(batch_images, batch_labels, db_name)
                         batches[db_name] = ([], [])
 
-    def handle_add_images(self, images: dict[str, bytes], db_name: str = DB_NAME) -> int:
+    def handle_add_images(self, images: dict[str, bytes], db_name: str = cfg.DB_NAME) -> int:
         """
         Add images to the search index.
 
@@ -144,7 +149,11 @@ class RPCService:
         return queued_count
 
     def handle_search(
-        self, query: Any, k: int = 10, similarity: int = 0, db_name: str = DB_NAME
+        self,
+        query: Any,
+        k: int = 10,
+        similarity: int = 0,
+        db_name: str = cfg.DB_NAME,
     ) -> list[tuple[str, float]] | None:
         """
         Search for similar images using image or text query.
@@ -213,14 +222,14 @@ class RPCService:
             List of database names found in the base directory
         """
         try:
-            db_list = self._get_db(DB_NAME).db_list()
+            db_list = self._get_db(cfg.DB_NAME).db_list()
             self.logger.debug(f'List dbs: {db_list}')
             return db_list
         except Exception as e:
             self.logger.error(f'Failed to list databases: {e}')
             return []
 
-    def handle_get_db_info(self, db_name: str = DB_NAME) -> dict:
+    def handle_get_db_info(self, db_name: str = cfg.DB_NAME) -> dict:
         """
         Get database information.
 
@@ -238,7 +247,7 @@ class RPCService:
             'capacity': db.capacity,
         }
 
-    def handle_clear_db(self, db_name: str = DB_NAME) -> bool:
+    def handle_clear_db(self, db_name: str = cfg.DB_NAME) -> bool:
         """
         Clear all images from the database.
 
@@ -296,9 +305,9 @@ class Server:
 
     def __init__(
         self,
-        base_dir: Path = BASE_DIR,
-        model_key: str = DEFAULT_MODEL_KEY,
-        bind: str = UNIX_SOCKET,
+        base_dir: Path = cfg.BASE_DIR,
+        model_key: str = cfg.DEFAULT_MODEL_KEY,
+        bind: str = cfg.UNIX_SOCKET,
         log_level: str = 'info',
     ):
         self._shutdown_requested = False
@@ -380,7 +389,7 @@ class Server:
             # Register service and start daemon
             self.logger.info('Preloading CLIP model...')
             self.daemon = self.create_daemon()
-            self.daemon.register(self.service, objectId=SERVICE_NAME)
+            self.daemon.register(self.service, objectId=cfg.SERVICE_NAME)
             self.service.clip  # preload clip model  # noqa: B018
 
             # Create pid file
@@ -473,7 +482,7 @@ class Server:
     @classmethod
     def status(cls):
         """Check server status."""
-        pid_file = BASE_DIR / 'isearch.pid'
+        pid_file = cfg.BASE_DIR / 'isearch.pid'
         if not pid_file.exists():
             print_err('iSearch service is not running')
             return False

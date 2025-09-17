@@ -11,7 +11,7 @@ Architecture:
   - Params: ef_construction=400 (build quality), M=32 (connections), allow_replace_deleted=True.
 - Bidict Mapping: Maintains bidirectional ID<->label lookup for O(1) access.
 - Persistence: index.db (HNSW binary), mapping.db (pickled dict).
-- Auto-resize: Increases capacity by 10k when full (initial CAPACITY=10k).
+- Auto-resize: Increases capacity by 10k when full (initial cfg.CAPACITY=10k).
 
 Usage:
     db = VectorDB('my_db')
@@ -31,7 +31,7 @@ from pickle import HIGHEST_PROTOCOL, dump, load
 from bidict import bidict
 from hnswlib import Index
 
-from imgsearch.consts import BASE_DIR, CAPACITY, DB_NAME, IDX_NAME, MAP_NAME
+from imgsearch import config as cfg
 from imgsearch.utils import Feature, ibatch
 
 # Type alias for ID-label mapping
@@ -58,21 +58,21 @@ class VectorDB:
         matches = db.search([0.15]*512, k=5, similarity=70)
     """
 
-    def __init__(self, db_name: str = DB_NAME, base_dir: Path = BASE_DIR) -> None:
+    def __init__(self, db_name: str = cfg.DB_NAME, base_dir: Path = cfg.BASE_DIR) -> None:
         """Initialize or load VectorDB instance.
 
         Creates paths, loads existing DB if files present, or initializes empty.
         Validates consistency between index count and mapping size.
 
         Args:
-            db_name (str): Database identifier. Defaults to DB_NAME ('default').
-            base_dir (Path): Root for DB directories. Defaults to BASE_DIR (~/.isearch).
+            db_name (str): Database identifier. Defaults to cfg.DB_NAME ('default').
+            base_dir (Path): Root for DB directories. Defaults to cfg.BASE_DIR (~/.isearch).
         """
         self.name = db_name
         self.base = base_dir
         self.path = (base_dir / db_name).resolve()
-        self.idx_path = self.path / IDX_NAME  # HNSW index file
-        self.map_path = self.path / MAP_NAME  # Label mapping file
+        self.idx_path = self.path / cfg.IDX_NAME  # HNSW index file
+        self.map_path = self.path / cfg.MAP_NAME  # Label mapping file
         self.index, self.mapping = self.load_db(self.path)
 
     @property
@@ -90,7 +90,7 @@ class VectorDB:
     @property
     def next_capacity(self) -> int:
         """Get next max elements for resizing index"""
-        return self.index.max_elements + CAPACITY
+        return self.index.max_elements + cfg.CAPACITY
 
     def has_id(self, id: int) -> bool:  # noqa: A002
         """Check if id exists in index"""
@@ -105,10 +105,20 @@ class VectorDB:
         return [label in self.mapping.inv for label in labels]
 
     @staticmethod
-    def new_index(init=True, max_elements: int = CAPACITY, ef: int = 400, max_conn: int = 32) -> Index:
+    def new_index(
+        init=True,
+        max_elements: int = cfg.CAPACITY,
+        ef: int = 400,
+        max_conn: int = 32,
+    ) -> Index:
         index = Index(space='cosine', dim=512)
         if init is True:
-            index.init_index(max_elements=max_elements, ef_construction=ef, M=max_conn, allow_replace_deleted=True)  # type: ignore
+            index.init_index(
+                max_elements=max_elements,
+                ef_construction=ef,
+                M=max_conn,
+                allow_replace_deleted=True,  # type: ignore
+            )
         return index
 
     @classmethod
@@ -118,8 +128,8 @@ class VectorDB:
             db_path = Path(db_path)
         db_path.mkdir(parents=True, exist_ok=True)
 
-        idx_path = db_path / IDX_NAME
-        map_path = db_path / MAP_NAME
+        idx_path = db_path / cfg.IDX_NAME
+        map_path = db_path / cfg.MAP_NAME
         if not idx_path.exists() and not map_path.exists():
             index = cls.new_index(init=True)
             mapping: Mapping = bidict()
@@ -153,7 +163,7 @@ class VectorDB:
         self.index.add_items([feature], [item_id], replace_deleted=True)
         self.mapping[item_id] = label
 
-    def add_items(self, labels: list[str], features: list[Feature], override: bool = False):
+    def add_items(self, labels: list[str], features: list[Feature]):
         """Add multiple items to index"""
         # TODO:
         # Check whether the label already exists. If override is True,
@@ -198,7 +208,7 @@ class VectorDB:
         databases: list[str] = [
             item.name
             for item in self.base.iterdir()
-            if item.is_dir() and (item / IDX_NAME).is_file() and (item / MAP_NAME).is_file()
+            if item.is_dir() and (item / cfg.IDX_NAME).is_file() and (item / cfg.MAP_NAME).is_file()
         ]
 
         return sorted(databases)

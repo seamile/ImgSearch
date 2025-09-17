@@ -11,8 +11,8 @@ import Pyro5.errors
 from PIL import Image
 
 from imgsearch import __version__
+from imgsearch import config as cfg
 from imgsearch import utils as ut
-from imgsearch.consts import BASE_DIR, BATCH_SIZE, DB_NAME, DEFAULT_MODEL_KEY, MODELS, SERVICE_NAME, UNIX_SOCKET
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 900_000_000
@@ -27,7 +27,7 @@ class Client:
     supporting image search, database management, and service control operations.
     """
 
-    def __init__(self, db_name: str = DB_NAME, bind: str = UNIX_SOCKET) -> None:
+    def __init__(self, db_name: str = cfg.DB_NAME, bind: str = cfg.UNIX_SOCKET) -> None:
         """Initialize the imgsearch client."""
         self.db_name = db_name
         self.bind = bind
@@ -42,11 +42,11 @@ class Client:
                     ut.print_err(f"Service not running or socket file missing at '{self.bind}'.")
                     ut.print_err("You can start the service with: 'isearch service start'")
                     sys.exit(1)
-                uri = f'PYRO:{SERVICE_NAME}@./u:{self.bind}'
+                uri = f'PYRO:{cfg.SERVICE_NAME}@./u:{self.bind}'
             else:
                 # Assume ip:port format
                 host, port = self.bind.split(':', 1)
-                uri = f'PYRO:{SERVICE_NAME}@{host}:{port}'
+                uri = f'PYRO:{cfg.SERVICE_NAME}@{host}:{port}'
 
             try:
                 # Configure Pyro5 to use msgpack serializer
@@ -65,9 +65,9 @@ class Client:
     @staticmethod
     def handle_service_command(
         service_cmd: str,
-        base_dir: Path = BASE_DIR,
-        model_key: str = DEFAULT_MODEL_KEY,
-        bind: str = UNIX_SOCKET,
+        base_dir: Path = cfg.BASE_DIR,
+        model_key: str = cfg.DEFAULT_MODEL_KEY,
+        bind: str = cfg.UNIX_SOCKET,
         log_level: str = 'info',
     ) -> None:
         """Handle service management commands."""
@@ -89,7 +89,7 @@ class Client:
             try:
                 img = Image.open(path)
                 send_dict[label] = ut.img2bytes(img, 384)
-                if len(send_dict) >= BATCH_SIZE:
+                if len(send_dict) >= cfg.BATCH_SIZE:
                     ut.print_inf(f'Sending {len(send_dict)} images to the server...')
                     self.service.handle_add_images(send_dict, self.db_name)
                     send_dict = {}
@@ -120,11 +120,11 @@ class Client:
             label = img_path.stem if label_type == 'name' else str(img_path.resolve())
             found_ipaths[label] = str(img_path)
 
-            if len(found_ipaths) >= BATCH_SIZE:
+            if len(found_ipaths) >= cfg.BATCH_SIZE:
                 new_images = self._filter_out_exists(found_ipaths)
                 to_added.update(new_images)
                 found_ipaths = {}
-                if len(to_added) >= BATCH_SIZE:
+                if len(to_added) >= cfg.BATCH_SIZE:
                     pool.submit(self._preprocess_images, to_added)
                     n_images += len(to_added)
                     to_added = {}
@@ -222,9 +222,9 @@ def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
     # Common arguments
     arg_bind = ArgumentParser(add_help=False)
-    arg_bind.add_argument('-B', dest='bind', default=UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
+    arg_bind.add_argument('-B', dest='bind', default=cfg.UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
     arg_db = ArgumentParser(add_help=False)
-    arg_db.add_argument('-d', dest='db_name', default=DB_NAME, help='Database name')
+    arg_db.add_argument('-d', dest='db_name', default=cfg.DB_NAME, help='Database name')
 
     # Main parser
     parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
@@ -251,12 +251,18 @@ def create_parser() -> ArgumentParser:
         help='Manage the iSearch service',
         formatter_class=DefaultFmt,
     )
-    cmd_service.add_argument('-b', dest='base_dir', type=Path, default=BASE_DIR, help='Database base directory path')
+    cmd_service.add_argument(
+        '-b',
+        dest='base_dir',
+        type=Path,
+        default=cfg.BASE_DIR,
+        help='Database base directory path',
+    )
     cmd_service.add_argument(
         '-m',
         dest='model_key',
-        choices=sorted(MODELS.keys()),
-        default=DEFAULT_MODEL_KEY,
+        choices=sorted(cfg.MODELS.keys()),
+        default=cfg.DEFAULT_MODEL_KEY,
         metavar='MODEL_KEY',
         help='CLIP model key for the service to use, options: %(choices)s',
     )

@@ -2,7 +2,7 @@
 
 [🇨🇳 中文](#imgsearch-图片搜索引擎) ⇌ [🇬🇧 English](#imgsearch)
 
-ImgSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描述搜图。基于 TinyCLIP（OpenCLIP 兼容）和 HNSWlib 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
+ImgSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描述搜图。基于 [TinyCLIP](https://github.com/wkcn/TinyCLIP) 和 [HNSWlib](https://github.com/nmslib/hnswlib) 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
 
 ## 特性
 
@@ -255,7 +255,7 @@ ImgSearch 支持多种 TinyCLIP 模型变体，平衡速度、准确率和资源
 | ViT-39Y  | 63.5                  | 9.5      | 1,469                | 准确度高，资源消耗中等，但速度较慢 |
 | ViT-40L  | 59.8                  | 3.5      | 4,641                |                                    |
 | ViT-45L  | 61.4                  | 3.7      | 3,682                |                                    |
-| ViT-45LY | 62.7                  | 1.9      | 3,685                | **默认：最佳均衡**，速度与精度兼备 |
+| ViT-45LY | 62.7                  | 1.9      | 3,685                | **默认模型**，速度与精度兼备       |
 | ViT-61L  | 62.4                  | 5.3      | 3,191                |                                    |
 | ViT-63L  | 63.9                  | 5.6      | 2,905                |                                    |
 | ViT-63LY | 64.5                  | 5.6      | 2,909                | 准确度最高                         |
@@ -265,18 +265,19 @@ ImgSearch 支持多种 TinyCLIP 模型变体，平衡速度、准确率和资源
 ## 目录结构
 
 ```
-src/imgsearch/
-├── __init__.py          # 包初始化
-├── __main__.py          # CLI 入口点
-├── client.py            # 客户端 API 和解析器
-├── server.py            # 服务端逻辑（Pyro5 RPC、信号处理）
-├── clip.py              # 特征提取（TinyCLIP 集成）
-├── storage.py           # 向量数据库（HNSWlib + bidict）
-├── utils.py             # 工具函数（图像处理、日志、颜色输出）
-└── consts.py            # 常量定义（模型、路径、配置）
+src/
+├ imgsearch/           # 主包目录
+│   ├ __init__.py      # 包初始化
+│   ├ __main__.py      # CLI 入口点
+│   ├ client.py        # 客户端 API 和解析器
+│   ├ server.py        # 服务端逻辑（Pyro5 RPC、信号处理）
+│   ├ clip.py          # 特征提取（TinyCLIP 集成）
+│   ├ storage.py       # 向量数据库（HNSWlib + bidict）
+│   ├ utils.py         # 工具函数（图像处理、日志、颜色输出）
+│   └ config.py        # 常量定义（模型、路径、配置）
+├ tinyclip/            # TinyCLIP 模型库（轻量级多模态嵌入）
+└ test/                # 测试脚本
 ```
-
-测试目录：`src/test/`（包含单元测试，使用 pytest）。
 
 ## 许可证
 
@@ -288,16 +289,16 @@ MIT License
 
 [🇬🇧 English](#imgsearch) ⇌ [🇨🇳 中文](#imgsearch-图片搜索引擎)
 
-ImgSearch is a lightweight image search engine supporting image-to-image and text-to-image search. Built on TinyCLIP (OpenCLIP-compatible) and HNSWlib, it's fast and resource-efficient, running on 2GB RAM devices. Use standalone or integrate as a Python library.
+ImgSearch is a lightweight image search engine that supports image-to-image search and text description search. Built on [TinyCLIP](https://github.com/wkcn/TinyCLIP)  and [HNSWlib](https://github.com/nmslib/hnswlib), it is fast, low resource usage, and can run on 2GB memory devices. It can be used as a standalone search engine or integrated into other systems as a Python library.
 
 ## Features
 
-- [x] Image-to-image search: Find similar images from query photo
-- [x] Text-to-image search: Search by natural language descriptions
-- [x] Image similarity comparison: Compute score (0-100%) between two images
-- [x] Batch image addition: Single files or folders (recursive), auto-deduplicate
-- [x] Multi-database support: Manage multiple independent image collections
-- [x] Similarity threshold filtering: Filter results by min similarity (e.g., ≥80%)
+- [x] Image-to-image search: Upload query image to quickly find similar images
+- [x] Text-to-image search: Search for related images through natural language descriptions
+- [x] Image similarity comparison: Calculate similarity score (0-100%) between two images
+- [x] Batch image addition: Support single files or folders (recursive addition), automatically skip duplicates
+- [x] Multi-database support: Create and manage multiple independent image libraries
+- [x] Similarity threshold filtering: Search results can set minimum similarity (e.g., ≥80%)
 
 ## Installation
 
@@ -309,28 +310,28 @@ pip install imgsearch
 
 ### CPU Environment
 
-For CPU-only setups (e.g., no NVIDIA GPU on macOS/server):
+In pure CPU environments (e.g., macOS or servers without NVIDIA GPU), install the CPU version of PyTorch first:
 
 ```shell
-# Install CPU PyTorch first
+# macOS Intel/Apple Silicon or Linux CPU
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Then install ImgSearch
 pip install imgsearch
 ```
 
-**Note**: ImgSearch uses TinyCLIP models (OpenCLIP-based), compatible with CPU/GPU. GPU users: Install standard PyTorch (`pip install torch torchvision`) for acceleration.
+**Note**: ImgSearch uses TinyCLIP models (based on OpenCLIP), compatible with CPU/GPU. GPU users can directly install standard PyTorch (`pip install torch torchvision`) to accelerate inference.
 
 ## Quick Start
 
 ### 1. Service Management
 
-ImgSearch runs as a background service for indexing/search. Supports Unix domain sockets (default, local-efficient) or TCP binding.
+ImgSearch uses a background service to handle indexing and search. The service supports Unix domain sockets (default, local efficient) or TCP binding.
 
 #### Start Service
 
 ```shell
-# Default: Use ~/.isearch/isearch.sock for local connection
+# Default: Use ~/.isearch/isearch.sock, local connection
 isearch service start
 
 # Specify model and log level
@@ -356,17 +357,17 @@ isearch service status
 
 Example output:
 ```
-iSearch service is running
+ImgSearch service is running
 * PID: 12345
 * MEM: 256.3 MB
 ```
 
 ### 2. Add Images to Index
 
-Add to specified database. Supports jpg, jpeg, png, bmp, webp. Folders recursively add all images, auto-skip duplicates (by label).
+Add images to the specified database. Supports formats such as jpg, jpeg, png, bmp, webp. Folders will recursively add all images, automatically filter duplicates (based on labels).
 
 ```shell
-# Add files/folders to default DB
+# Add single files or folders to default database
 isearch add ./images/photo1.jpg ./dataset/
 
 # Use filename as label (default: absolute path)
@@ -376,26 +377,26 @@ isearch add -l name ./images/
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
-Images converted to 384x384, extract TinyCLIP features (512-dim vectors), stored in HNSW index.
+After adding, images will be converted to 384x384 and TinyCLIP features (512-dimensional vectors) will be extracted, stored in HNSW index.
 
 ### 3. Search Images
 
-Search images uses the `search` subcommand, but for operational convenience, iSearch has set it as the default subcommand, which can be omitted during use. If no subcommand is specified and the arguments don't match other commands, it will be automatically treated as a search.
+Search images uses the `search` subcommand, but for operational convenience, isearch has set it as the default subcommand, which can be omitted during use. If no subcommand is specified and the arguments don't match other commands, it will be automatically treated as a search.
 
 Search images syntax: `isearch [search] QUERY` (`[search]` optional).
 
 #### Image-to-Image Search
 
 ```shell
-# Search similar images, top 10 (similarity ≥0%)
+# Search similar images, return top 10 results (similarity ≥0%)
 isearch ./query.jpg
 # Equivalent: isearch search ./query.jpg
 
-# Set min similarity and num results
+# Set minimum similarity threshold and result count
 isearch -n 5 -m 80 ./query.jpg
 # Equivalent: isearch search -n 5 -m 80 ./query.jpg
 
-# Auto-open results
+# Automatically open result images
 isearch -o ./query.jpg
 # Equivalent: isearch search -o ./query.jpg
 ```
@@ -403,11 +404,11 @@ isearch -o ./query.jpg
 #### Text-to-Image Search
 
 ```shell
-# Search "red flower" related images
+# Search for "red flower" related images
 isearch "red flower"
 # Equivalent: isearch search "red flower"
 
-# Specify num and threshold
+# Specify count and threshold
 isearch -n 3 -m 70 "sunset beach"
 # Equivalent: isearch search -n 3 -m 70 "sunset beach"
 ```
@@ -423,7 +424,7 @@ Found 5 similar images (similarity ≥ 70.0%):
 
 ### 4. Database Management
 
-Manage single/multiple databases (each independent index).
+Manage single or multiple databases (each database has independent index).
 
 #### View Database Info
 
@@ -431,7 +432,7 @@ Manage single/multiple databases (each independent index).
 isearch db --info
 ```
 
-Example:
+Example output:
 ```
 Database "default"
 * Base: /Users/user/.isearch/default
@@ -460,7 +461,7 @@ Available databases:
 isearch db --clear -d my_db
 ```
 
-**Warning**: Irreversible, deletes all index data.
+**Warning**: This operation is irreversible and will delete all index data.
 
 ### 5. Compare Two Images
 
@@ -475,16 +476,16 @@ Similarity between images: 87.5%
 
 ### 6. Command-Line Arguments
 
-Global args (all subcommands):
-- `-d DB_NAME`: Database name (default: `default`)
-- `-B BIND`: Service bind (default: `~/.isearch/isearch.sock`; TCP: `host:port`)
-- `-v, --version`: Show version
+Global parameters (applicable to all subcommands):
+- `-d DB_NAME`: Specify database name (default: `default`)
+- `-B BIND`: Service bind address (default: `~/.isearch/isearch.sock`; TCP format: `host:port`)
+- `-v, --version`: Display version (current: 0.2.0)
 
 Subcommand-specific: See above.
 
 ## As a Python Module
 
-Import for library use, operates on service or standalone (service recommended for concurrency).
+ImgSearch can be imported as a library, directly operating on the service or standalone (but service mode is recommended to support concurrency).
 
 ```python
 from imgsearch.client import Client
@@ -503,7 +504,7 @@ if results:
     for path, sim in results:
         print(f"{path} (similarity: {sim}%)")
 else:
-    print('No matches or search queue full')
+    print('No matching results or search queue full')
 
 # Text-to-image search
 results = cli.search('red apple', num=10, similarity=0)
@@ -514,55 +515,56 @@ for path, sim in results:
 similarity = cli.compare_images('./img1.jpg', './img2.jpg')
 print(f'Similarity: {similarity}%')
 
-# Database ops
+# Database operations
 dbs = cli.list_dbs()
 print(f'Available databases: {dbs}')
 
 info = cli.get_db_info()
-print(f'DB info: {info}')
+print(f'Database information: {info}')
 
-# Clear DB (returns True/False)
+# Clear database (returns True/False)
 cleared = cli.clear_db()
-print(f'Cleared: {cleared}')
+print(f'Clear success: {cleared}')
 ```
 
-**Note**: Requires running service (`isearch service start`), else connection fails.
+**Note**: Module usage requires starting the service first (`isearch service start`), otherwise connection will fail.
 
 ## Model Selection Guide
 
-ImgSearch supports various TinyCLIP model variants, balancing speed, accuracy, resources. Default `ViT-45LY` for most cases.
+ImgSearch supports multiple TinyCLIP model variants, balancing speed, accuracy, and resources. The default `ViT-45LY` is suitable for most scenarios.
 
-| Model Key | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | Recommended Scenarios                                                 |
-|-----------|-----------------------|----------|----------------------|-----------------------------------------------------------------------|
-| ViT-8Y    | 41.1                  | 2.0      | 4,150                | Lowest resource usage, fast performance, with slightly lower accuracy |
-| RN-19L    | 56.4                  | 4.4      | 3,024                |                                                                       |
-| ViT-22L   | 53.7                  | 1.9      | 5,504                | Fastest speed, ideal for scenarios with high speed requirements       |
-| RN-30L    | 59.1                  | 6.9      | 1,811                |                                                                       |
-| ViT-39Y   | 63.5                  | 9.5      | 1,469                | High accuracy, moderate resource consumption, but slower speed        |
-| ViT-40L   | 59.8                  | 3.5      | 4,641                |                                                                       |
-| ViT-45L   | 61.4                  | 3.7      | 3,682                |                                                                       |
-| ViT-45LY  | 62.7                  | 1.9      | 3,685                | **Default: Best balance** of speed and accuracy                       |
-| ViT-61L   | 62.4                  | 5.3      | 3,191                |                                                                       |
-| ViT-63L   | 63.9                  | 5.6      | 2,905                |                                                                       |
-| ViT-63LY  | 64.5                  | 5.6      | 2,909                | Highest accuracy                                                      |
+| Model Key | ImageNet-1K Acc@1 (%) | MACs (G) | Throughput (pairs/s) | Recommended Scenarios                                            |
+|-----------|-----------------------|----------|----------------------|------------------------------------------------------------------|
+| ViT-8Y    | 41.1                  | 2.0      | 4,150                | Lowest resource consumption, fast speed, slightly lower accuracy |
+| RN-19L    | 56.4                  | 4.4      | 3,024                |                                                                  |
+| ViT-22L   | 53.7                  | 1.9      | 5,504                | Fastest speed, suitable for high-speed requirement scenarios     |
+| RN-30L    | 59.1                  | 6.9      | 1,811                |                                                                  |
+| ViT-39Y   | 63.5                  | 9.5      | 1,469                | High accuracy, moderate resource consumption, but slower speed   |
+| ViT-40L   | 59.8                  | 3.5      | 4,641                |                                                                  |
+| ViT-45L   | 61.4                  | 3.7      | 3,682                |                                                                  |
+| ViT-45LY  | 62.7                  | 1.9      | 3,685                | **Default model**, balance of speed and accuracy                 |
+| ViT-61L   | 62.4                  | 5.3      | 3,191                |                                                                  |
+| ViT-63L   | 63.9                  | 5.6      | 2,905                |                                                                  |
+| ViT-63LY  | 64.5                  | 5.6      | 2,909                | Highest accuracy                                                 |
 
 Data source: TinyCLIP model library. Choose small models (e.g., ViT-8Y) for low-end devices; large models (e.g., ViT-63LY) for high-precision needs. To switch models, restart the service: `isearch service start -m MODEL_KEY`.
 
 ## Directory Structure
 
 ```
-src/imgsearch/
-├── __init__.py          # Package init
-├── __main__.py          # CLI entrypoint
-├── client.py            # Client API and parser
-├── server.py            # Server logic (Pyro5 RPC, signals)
-├── clip.py              # Feature extraction (TinyCLIP integration)
-├── storage.py           # Vector DB (HNSWlib + bidict)
-├── utils.py             # Utilities (image proc, logging, colors)
-└── consts.py            # Constants (models, paths, config)
+src/
+├ imgsearch/           # Main package directory
+│   ├ __init__.py      # Package initialization
+│   ├ __main__.py      # CLI entry point
+│   ├ client.py        # Client API and parser
+│   ├ server.py        # Server logic (Pyro5 RPC, signal handling)
+│   ├ clip.py          # Feature extraction (TinyCLIP integration)
+│   ├ storage.py       # Vector database (HNSWlib + bidict)
+│   ├ utils.py         # Utility functions (image processing, logging, color output)
+│   └ config.py        # Constant definitions (models, paths, configuration)
+├ tinyclip/            # TinyCLIP model library (lightweight multimodal embedding)
+└ test/                # Test scripts
 ```
-
-Tests: `src/test/` (unit tests with pytest).
 
 ## License
 

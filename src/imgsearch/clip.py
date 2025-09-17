@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from imgsearch.consts import DEFAULT_MODEL_KEY, MODELS
+from imgsearch import config as cfg
 from imgsearch.utils import Feature, cpu_count
 from tinyclip import create_model_and_transforms, get_tokenizer
 
@@ -34,15 +34,15 @@ class Clip:
         sim = clip.compare_images(img1, img2)  # 0-100% similarity
     """
 
-    def __init__(self, model_key: str = DEFAULT_MODEL_KEY, device: str | None = None) -> None:
+    def __init__(self, model_key: str = cfg.DEFAULT_MODEL_KEY, device: str | None = None) -> None:
         """Initialize CLIP wrapper with model loading and device setup.
 
         Loads model/transforms/tokenizer from OpenCLIP, moves to optimal device,
         sets evaluation mode, and configures threading for CPU/MPS.
 
         Args:
-            model_key (str): Model variant key from consts.MODELS.
-                Defaults to DEFAULT_MODEL_KEY ('ViT-45LY').
+            model_key (str): Model variant key from cfg.MODELS.
+                Defaults to cfg.DEFAULT_MODEL_KEY ('ViT-45LY').
             device (str | None): Override device ('cuda', 'mps', 'cpu').
                 Defaults to auto-detection.
         """
@@ -55,7 +55,7 @@ class Clip:
 
         if self.device.type == 'cpu':
             # Optimize CPU threading to prevent slowdowns
-            torch.set_num_threads(max(cpu_count(), 2))
+            torch.set_num_threads(max(cpu_count() * 2, 2))
 
         # MPS requires explicit float32 (avoids precision issues)
         if self.device.type == 'mps':
@@ -91,9 +91,9 @@ class Clip:
             return torch.device('cpu')
 
     @staticmethod
-    def load_model(model_key: str = DEFAULT_MODEL_KEY):
+    def load_model(model_key: str = cfg.DEFAULT_MODEL_KEY):
         """Load CLIP model and processor"""
-        model_name, pretrained = MODELS[model_key]
+        model_name, pretrained = cfg.MODELS[model_key]
         model, _, processor = create_model_and_transforms(model_name, pretrained=pretrained)
         tokenizer = get_tokenizer(model_name)
         return model, processor, tokenizer  # type: ignore

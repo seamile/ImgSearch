@@ -1,4 +1,5 @@
 import unittest
+from multiprocessing import cpu_count
 from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 import numpy as np
@@ -66,15 +67,15 @@ class TestClipInitialization(unittest.TestCase):
         mock_get_device.return_value = torch.device('cpu')
         mock_load_model.return_value = self.mock_model_and_transforms
 
-        _ = Clip(model_key='ViT-B-32', device='cpu')  # Use _ to indicate intentional unused variable
+        Clip(model_key='ViT-B-32', device='cpu')
 
-        mock_threads.assert_called_once_with(max(16, 2))
+        mock_threads.assert_called_once_with(max(cpu_count() * 2, 2))
 
     def test_init_invalid_device(self):
         with self.assertRaises(RuntimeError):
             Clip(model_key='ViT-B-32', device='invalid')
 
-    @patch.dict('imgsearch.consts.MODELS', {'invalid_model': None}, clear=True)
+    @patch.dict('imgsearch.config.MODELS', {'invalid_model': None}, clear=True)
     @patch.object(Clip, 'load_model')
     @patch.object(Clip, 'get_device')
     def test_init_invalid_model_key(self, mock_load_model, mock_get_device):
@@ -120,7 +121,7 @@ class TestClipStaticMethods(unittest.TestCase):
         self.assertEqual(device.type, 'mps')
 
     @patch.object(Clip, 'load_model')
-    @patch('imgsearch.clip.MODELS')
+    @patch('imgsearch.config.MODELS')
     def test_load_model_valid(self, mock_models, mock_load_model):
         mock_models.__contains__.return_value = True
         mock_model = MagicMock()
@@ -136,7 +137,7 @@ class TestClipStaticMethods(unittest.TestCase):
         mock_load_model.assert_called_once_with('ViT-B-32')
 
     @patch.object(Clip, 'load_model')
-    @patch('imgsearch.clip.MODELS')
+    @patch('imgsearch.config.MODELS')
     def test_load_model_invalid(self, mock_models, mock_load_model):
         mock_models.__contains__.return_value = False
         mock_load_model.side_effect = ValueError('Invalid model key')
@@ -186,7 +187,7 @@ class TestClipFeatures(unittest.TestCase):
         result = clip.embed_images(images)
 
         self.assertEqual(len(result), len(images))
-        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)
+        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)  # type: ignore
         mock_embed_images.assert_called_once_with(images)
 
     @patch.object(Clip, 'embed_images')
@@ -214,7 +215,7 @@ class TestClipFeatures(unittest.TestCase):
         result = mock_embed_images(converted_images)
 
         self.assertEqual(len(result), len(converted_images))
-        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)
+        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)  # type: ignore
         mock_embed_images.assert_called_once_with(converted_images)
 
     @patch.object(Clip, 'embed_images')
@@ -235,7 +236,7 @@ class TestClipFeatures(unittest.TestCase):
         result = clip.embed_images(images)
 
         self.assertEqual(len(result), len(images))
-        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)
+        self.assertAlmostEqual(np.linalg.norm(np.array(result[0])), 1.0, places=5)  # type: ignore
         mock_embed_images.assert_called_once_with(images)
 
     @patch.object(Clip, 'embed_image')
@@ -272,7 +273,7 @@ class TestClipFeatures(unittest.TestCase):
         result = clip.embed_text('test')
 
         self.assertIsInstance(result, list)
-        self.assertAlmostEqual(np.linalg.norm(np.array(result)), 1.0, places=5)
+        self.assertAlmostEqual(np.linalg.norm(np.array(result)), 1.0, places=5)  # type: ignore
         clip.tokenizer.assert_called_once_with(['test'])
         clip.model.encode_text.assert_called_once()
 
@@ -325,7 +326,7 @@ class TestClipFeatures(unittest.TestCase):
 
         self.assertAlmostEqual(result, expected_similarity)
 
-    @patch.dict('imgsearch.consts.MODELS', {'ViT-B-32': ('ViT-B/32', 'openai')})
+    @patch.dict('imgsearch.config.MODELS', {'ViT-B-32': ('ViT-B/32', 'openai')})
     @patch.object(Clip, 'load_model')
     def test_del_shutdown(self, mock_load_model):
         mock_model = Mock()

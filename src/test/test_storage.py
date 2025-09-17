@@ -28,7 +28,7 @@ class TestVectorDB(unittest.TestCase):
 
     def test_init_new_database(self):
         """Test initialization with new database"""
-        from imgsearch.consts import CAPACITY
+        from imgsearch.config import CAPACITY
         from imgsearch.storage import VectorDB
 
         db = VectorDB(self.test_db_name, self.test_base_dir)
@@ -70,8 +70,8 @@ class TestVectorDB(unittest.TestCase):
             if name.startswith('imgsearch'):
                 del sys.modules[name]
 
-        with patch('imgsearch.consts.BASE_DIR', self.test_base_dir):
-            from imgsearch.consts import CAPACITY, DB_NAME
+        with patch('imgsearch.config.BASE_DIR', self.test_base_dir):
+            from imgsearch.config import CAPACITY, DB_NAME
             from imgsearch.storage import VectorDB
 
             db = VectorDB()
@@ -110,7 +110,7 @@ class TestVectorDB(unittest.TestCase):
 
     def test_new_index(self):
         """Test new_index static method"""
-        from imgsearch.consts import CAPACITY
+        from imgsearch.config import CAPACITY
         from imgsearch.storage import VectorDB
 
         index = VectorDB.new_index()
@@ -196,7 +196,7 @@ class TestVectorDB(unittest.TestCase):
 
     def test_add_item_resize_index(self):
         """Test adding item triggers index resize"""
-        from imgsearch.consts import CAPACITY
+        from imgsearch.config import CAPACITY
         from imgsearch.storage import VectorDB
 
         db = VectorDB(self.test_db_name, self.test_base_dir)
@@ -249,7 +249,7 @@ class TestVectorDB(unittest.TestCase):
 
     def test_save_and_load(self):
         """Test saving and loading database"""
-        from imgsearch.consts import IDX_NAME, MAP_NAME
+        from imgsearch.config import IDX_NAME, MAP_NAME
         from imgsearch.storage import VectorDB
 
         db = VectorDB(self.test_db_name, self.test_base_dir)
@@ -419,7 +419,7 @@ class TestVectorDB(unittest.TestCase):
 
     def test_clear_database(self):
         """Test clearing database"""
-        from imgsearch.consts import CAPACITY
+        from imgsearch.config import CAPACITY
         from imgsearch.storage import VectorDB
 
         db = VectorDB(self.test_db_name, self.test_base_dir)
