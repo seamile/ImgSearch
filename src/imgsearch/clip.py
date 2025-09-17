@@ -11,11 +11,11 @@ from functools import cached_property
 
 import numpy as np
 import torch
-from open_clip import create_model_and_transforms, get_tokenizer
 from PIL import Image
 
 from imgsearch.consts import DEFAULT_MODEL_KEY, MODELS
 from imgsearch.utils import Feature, cpu_count
+from tinyclip import create_model_and_transforms, get_tokenizer
 
 
 class Clip:

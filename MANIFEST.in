@@ -1,0 +1,5 @@
+recursive-include src/tinyclip *.gz
+recursive-include src/tinyclip/model_configs *.json
+include README.md
+include LICENSE
+include pyproject.toml

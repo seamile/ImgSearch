@@ -235,7 +235,7 @@ class VectorDB:
         for vid, distance in zip(v_ids[0], distances[0], strict=True):
             if label := self.mapping.get(vid):
                 # Convert distance to similarity
-                res_similarity = round((1.0 - distance) * 100, 1)
+                res_similarity = round((1.0 - float(distance)) * 100, 1)
                 if res_similarity >= similarity:
                     results.append((label, res_similarity))
 
