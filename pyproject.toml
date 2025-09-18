@@ -1,6 +1,6 @@
 [project]
 name = "imgsearch"
-version = "0.2.1"
+version = "0.3.0"
 description = "ImgSearch is a lightweight image search engine that supports searching images by image."
 readme = "README.md"
 authors = [
@@ -24,7 +24,7 @@ dependencies = [
     "hnswlib>=0.8.0",
     "msgpack>=1.1.1",
     "pillow>=11.3.0",
-    "psutil>=7.0.0",
+    "psutil>=7.1.0",
     "pyro5>=5.15",
     # NumPy with version constraints
     "numpy<2; sys_platform=='darwin' and platform_machine=='x86_64'",

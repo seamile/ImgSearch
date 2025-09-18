@@ -13,6 +13,7 @@ from PIL import Image
 from imgsearch import __version__
 from imgsearch import config as cfg
 from imgsearch import utils as ut
+from imgsearch.setup import remove_service, setup_service
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 900_000_000
@@ -71,16 +72,34 @@ class Client:
         log_level: str = 'info',
     ) -> None:
         """Handle service management commands."""
-        from .server import Server
-
-        server = Server(base_dir=base_dir, model_key=model_key, bind=bind, log_level=log_level)
         match service_cmd:
-            case 'start':
-                server.run()
-            case 'stop':
-                server.stop()
-            case 'status':
-                Server.status()
+            case 'start' | 'stop' | 'status':
+                from imgsearch.server import Server
+
+                server = Server(base_dir=base_dir, model_key=model_key, bind=bind, log_level=log_level)
+                match service_cmd:
+                    case 'start':
+                        server.run()
+                    case 'stop':
+                        server.stop()
+                    case 'status':
+                        Server.status()
+
+            case 'setup' | 'remove':
+                try:
+                    msg = ut.bold(f'Are you sure to {service_cmd} isearch service? [y/N]: ')
+                    if input(msg).lower() != 'y':
+                        return
+                    elif service_cmd == 'setup' and setup_service(base_dir, model_key, service_cmd):
+                        ut.print_inf(f'Service {service_cmd} completed successfully.')
+                    elif service_cmd == 'remove' and remove_service():
+                        ut.print_inf(f'Service {service_cmd} completed successfully.')
+                    else:
+                        ut.print_err(f'Failed to {service_cmd} isearch service.')
+                        sys.exit(1)
+                except Exception as e:
+                    ut.print_err(f'{service_cmd.title()} failed: {e}')
+                    sys.exit(1)
 
     def _preprocess_images(self, batch: dict[str, str]) -> None:
         """Process a batch of image paths."""
@@ -268,9 +287,9 @@ def create_parser() -> ArgumentParser:
     )
     cmd_service.add_argument(
         'action',
-        choices=['start', 'stop', 'status'],
+        choices=['start', 'stop', 'status', 'setup', 'remove'],
         metavar='ACTION',
-        help='Service action to perform, options: %(choices)s',
+        help='Service action to perform, options: start, stop, status, setup, remove',
     )
     cmd_service.add_argument(
         '-L',
