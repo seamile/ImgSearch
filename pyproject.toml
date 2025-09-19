@@ -1,11 +1,11 @@
 [project]
 name = "imgsearch"
-version = "0.3.0"
+dynamic = ["version"]
 description = "ImgSearch is a lightweight image search engine that supports searching images by image."
+keywords = ["image-search-engine", "search-by-image", "hnsw", "tinyclip"]
 readme = "README.md"
-authors = [
-    { name = "Seamile", email = "lanhuermao@gmail.com" }
-]
+license-files = ["LICENSE"]
+authors = [{ name = "Seamile", email = "lanhuermao@gmail.com" }]
 classifiers = [
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
@@ -48,6 +48,15 @@ dev = [
 [project.scripts]
 isearch = "imgsearch.client:main"
 
+[project.urls]
+homepage = "https://github.com/seamile/imgsearch"
+repository = "https://github.com/seamile/imgsearch"
+documentation = "https://github.com/seamile/ImgSearch/blob/main/README.md"
+
+[build-system]
+requires = ["setuptools>=60.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["imgsearch*", "tinyclip*"]
@@ -55,6 +64,5 @@ include = ["imgsearch*", "tinyclip*"]
 [tool.setuptools.package-data]
 "tinyclip" = ["*.gz", "model_configs/*.json"]
 
-[build-system]
-requires = ["setuptools>=60.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools.dynamic]
+version = { attr = "imgsearch.__version__" }
