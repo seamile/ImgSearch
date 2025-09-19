@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from imgsearch.config import SERVICE_NAME
+from imgsearch import config as cfg
 
 SYSTEMD_SERVICE_TEMPLATE = """[Unit]
 Description=iSearch - Lightweight Image Search Engine
@@ -17,7 +17,7 @@ User={username}
 Group={usergroup}
 WorkingDirectory={base_dir}
 Environment=PATH={py_bin}:/usr/local/bin:/usr/bin:/bin
-ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key}
+ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -l {log_level}
 ExecStop=kill $MAINPID
 Restart=on-failure
 RestartSec=30
@@ -48,6 +48,10 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
       <string>{base_dir}</string>
       <string>-m</string>
       <string>{model_key}</string>
+      <string>-B</string>
+      <string>{bind}</string>
+      <string>-l</string>
+      <string>{log_level}</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -84,11 +88,13 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def get_env_variables(base_dir: str, model_key: str, service_name: str):
+def get_env_variables(base_dir: str, model_key: str, bind: str, log_level: str, service_name: str):
     """Generate service config content for the current platform."""
     return {
         'base_dir': base_dir,
         'model_key': model_key,
+        'bind': bind,
+        'log_level': log_level,
         'service_name': service_name,
         'py_bin': str(Path(sys.executable).parent.absolute()),
         'username': os.getlogin(),
@@ -126,13 +132,19 @@ def setup_launchd_service(env_vars: dict[str, str]):
     subprocess.run(['launchctl', 'start', env_vars['service_name']], check=True)
 
 
-def setup_service(base_dir: str | Path, model_key: str, service_name=SERVICE_NAME) -> bool:
+def setup_service(
+    base_dir: str | Path = cfg.BASE_DIR,
+    model_key: str = cfg.DEFAULT_MODEL_KEY,
+    bind: str = cfg.UNIX_SOCKET,
+    log_level: str = 'info',
+    service_name=cfg.SERVICE_NAME,
+) -> bool:
     """Install service on the current platform."""
     base_dir = Path(base_dir).resolve()
     if not base_dir.is_dir():
         raise NotADirectoryError(f'Base directory {base_dir} does not exist.')
 
-    env_vars = get_env_variables(str(base_dir), model_key, service_name)
+    env_vars = get_env_variables(str(base_dir), model_key, bind, log_level, service_name)
 
     if sys.platform == 'linux':
         setup_systemd_service(env_vars)
@@ -171,7 +183,7 @@ def remove_launchd_service(service_name: str):
         plist_path.unlink()
 
 
-def remove_service(service_name=SERVICE_NAME) -> bool:
+def remove_service(service_name=cfg.SERVICE_NAME) -> bool:
     """Remove service from the current platform."""
 
     if sys.platform == 'linux':

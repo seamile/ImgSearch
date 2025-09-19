@@ -76,7 +76,7 @@ class Client:
             case 'start' | 'stop' | 'status':
                 from imgsearch.server import Server
 
-                server = Server(base_dir=base_dir, model_key=model_key, bind=bind, log_level=log_level)
+                server = Server(base_dir, model_key, bind, log_level)
                 match service_cmd:
                     case 'start':
                         server.run()
@@ -90,7 +90,7 @@ class Client:
                     msg = ut.bold(f'Are you sure to {service_cmd} isearch service? [y/N]: ')
                     if input(msg).lower() != 'y':
                         return
-                    elif service_cmd == 'setup' and setup_service(base_dir, model_key, service_cmd):
+                    elif service_cmd == 'setup' and setup_service(base_dir, model_key, bind, log_level):
                         ut.print_inf(f'Service {service_cmd} completed successfully.')
                     elif service_cmd == 'remove' and remove_service():
                         ut.print_inf(f'Service {service_cmd} completed successfully.')
@@ -258,7 +258,7 @@ def create_parser() -> ArgumentParser:
         help=f'Search images {ut.bold("(default)")}',
         formatter_class=DefaultFmt,
     )
-    cmd_search.add_argument('-m', dest='min_similarity', type=int, default=0, help='Min similarity threshold, 0 - 100')
+    cmd_search.add_argument('-m', dest='sim_thr', type=int, default=0, help='Similarity threshold, 0 - 100')
     cmd_search.add_argument('-n', dest='num', type=int, default=10, help='Number of search results')
     cmd_search.add_argument('-o', dest='open_res', action='store_true', help='Open the searched images')
     cmd_search.add_argument('target', nargs='?', help='Search target (image path or keyword)')
@@ -377,14 +377,14 @@ def main() -> None:  # noqa: C901
     elif args.command == 'search':
         client = Client(db_name=args.db_name, bind=args.bind)
         # Validate similarity parameter
-        if not 0.0 <= args.min_similarity <= 100.0:
-            ut.print_err('Error: min_similarity must be between 0 and 100')
+        if not 0.0 <= args.sim_thr <= 100.0:
+            ut.print_err('Error: sim_thr must be between 0 and 100')
             sys.exit(1)
 
         ut.print_inf(f'Searching {args.target}...')
-        results = client.search(args.target, args.num, args.min_similarity)
+        results = client.search(args.target, args.num, args.sim_thr)
         if results:
-            ut.print_inf(f'Found {len(results)} similar images (similarity ≥ {args.min_similarity}%):')
+            ut.print_inf(f'Found {len(results)} similar images (similarity ≥ {args.sim_thr}%):')
             for i, (path, similarity) in enumerate(results, 1):
                 ut.print_inf(f'{i:2d}. {path}\t{similarity}%')
 

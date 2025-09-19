@@ -7,7 +7,6 @@ authors = [
     { name = "Seamile", email = "lanhuermao@gmail.com" }
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.11",
@@ -35,7 +34,7 @@ dependencies = [
     "torchvision>=0.17.2", # dependi: disable-check
     # TinyCLIP dependencies
     "ftfy>=6.3.1",
-    "regex>=2025.9.1",
+    "regex>=2025.9.18",
     "tqdm>=4.67.1",
     "huggingface-hub>=0.35.0",
 ]
