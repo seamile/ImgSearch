@@ -41,19 +41,17 @@ If using uv as your Python package manager:
 uv pip install --torch-backend cpu imgsearch
 ```
 
-**Note**: ImgSearch's TinyCLIP models work on both CPU and GPU. GPU users can skip the CPU-specific steps and use the standard PyTorch installation for faster performance.
-
 ## Quick Start
 
 ### 1. Service Management
 
 ImgSearch follows a client-server architecture: the server handles indexing and search tasks, while the client manages user requests. Before using ImgSearch, start the server process.
 
-The server supports Unix domain sockets (default for local, efficient connections) or TCP binding. The default Unix socket is at `~/.isearch/isearch.sock`.
+The server supports unix domain sockets (default for local, efficient connections) or TCP binding. The default unix socket is at `~/.isearch/isearch.sock`.
 
 #### Basic Usage
 
-The default model is ViT-45LY (TinyCLIP-auto-ViT-45M-32-Text-18M-LAIONYFCC400M). See [Model Selection Guide](#model-selection-guide) for available options.
+The default model is ViT-45LY (`TinyCLIP-auto-ViT-45M-32-Text-18M-LAIONYFCC400M`). See [Model Selection Guide](#model-selection-guide) for available options.
 
 ##### i. Start Service
 
@@ -90,7 +88,7 @@ ImgSearch service is running
 
 #### Running as a System Service
 
-ImgSearch can run as a background system service that starts and stops with your system. On Linux, it uses `systemd`; on macOS, `launchd`. The tool auto-detects your environment—no manual configuration needed.
+ImgSearch can run as a background system service that starts and stops with your system. On Linux, it uses `systemd`; on macOS, `launchd`. The tool auto-detects your environment — no manual configuration needed.
 
 ##### i. Set Up Service
 
@@ -131,22 +129,22 @@ The `add` command extracts 512-dimensional feature vectors from images using Tin
 
 The `search` subcommand handles image searches, but for ease of use, it's the default—omit it if your arguments don't match other commands.
 
-Search syntax: `isearch [search] QUERY` (`[search]` optional).
+Search command: `isearch [search] QUERY`.
 
 #### Search by Image
 
 ```shell
 # Search similar images, return top 10 results (similarity ≥0%)
 isearch ./query.jpg
-# Equivalent: isearch search ./query.jpg
+
+# Equivalent:
+isearch search ./query.jpg
 
 # Set minimum similarity threshold and result count
-isearch -n 5 -m 80 ./query.jpg
-# Equivalent: isearch search -n 5 -m 80 ./query.jpg
+isearch -n 5 -t 80 ./query.jpg
 
-# Automatically open result images
+# Automatically open result images (the Label when adding an image must be a path)
 isearch -o ./query.jpg
-# Equivalent: isearch search -o ./query.jpg
 ```
 
 #### Search by Text
@@ -154,16 +152,14 @@ isearch -o ./query.jpg
 ```shell
 # Search for "red flower" related images
 isearch "red flower"
-# Equivalent: isearch search "red flower"
 
 # Specify count and threshold
-isearch -n 3 -m 70 "sunset beach"
-# Equivalent: isearch search -n 3 -m 70 "sunset beach"
+isearch -n 3 -t 70 "sports car"
 ```
 
 Results sorted by similarity descending, show path and percentage. Example:
 ```
-Searching red flower...
+Searching sports car...
 Found 5 similar images (similarity ≥ 70.0%):
  1. /path/to/img1.jpg	92.3%
  2. /path/to/img2.png	85.1%
@@ -341,9 +337,9 @@ uv pip install --torch-backend cpu imgsearch
 
 ## 使用方法
 
-ImgSearch 整体为 C-S 架构，服务端处理索引和搜索，客户端处理用户请求。使用前需先开启他的服务端程序。
-
 ### 1. 服务管理
+
+ImgSearch 整体为 C-S 架构，服务端处理索引和搜索，客户端处理用户请求。使用前需先开启他的服务端程序。
 
 ImgSearch 服务端支持 Unix 域套接字或 TCP 绑定。默认使用 Unix 域套接字运行在本地，稳定且高效。默认 UDS 位置为 `~/.isearch/isearch.sock`。
 
@@ -425,7 +421,7 @@ isearch add -d my_gallery ./photos/ -B ./isearch.sock
 
 搜索图片使用 `search` 子命令，为了操作方便，isearch 已将它设为默认子命令，使用时可以省略。
 
-搜图语法：`isearch [search] QUERY`（`[search]` 可选）。
+搜图方式：`isearch [search] QUERY`。
 
 #### 以图搜图
 
@@ -437,9 +433,9 @@ isearch ./query.jpg
 isearch search ./query.jpg
 
 # 设置最小相似度阈值和结果数量
-isearch -n 5 -m 80 ./query.jpg
+isearch -n 5 -t 80 ./query.jpg
 
-# 自动打开结果图片
+# 自动打开结果图片（添加图片时的 Label 必须是 path）
 isearch -o ./query.jpg
 ```
 
@@ -450,7 +446,7 @@ isearch -o ./query.jpg
 isearch "red flower"
 
 # 指定数量和阈值
-isearch -n 3 -m 70 "sports car"
+isearch -n 3 -t 70 "sports car"
 ```
 
 搜索结果按相似度降序排列，显示路径和相似度。示例：
@@ -585,3 +581,4 @@ ImgSearch 支持多种 TinyCLIP 模型，默认的 `ViT-45LY` 平衡了速度、
 # 重启 isearch 服务
 isearch service stop
 isearch service start -m NEW_MODEL_KEY
+```

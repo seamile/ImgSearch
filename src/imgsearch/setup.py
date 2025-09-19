@@ -17,7 +17,7 @@ User={username}
 Group={usergroup}
 WorkingDirectory={base_dir}
 Environment=PATH={py_bin}:/usr/local/bin:/usr/bin:/bin
-ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -l {log_level}
+ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -L {log_level}
 ExecStop=kill $MAINPID
 Restart=on-failure
 RestartSec=30
@@ -50,7 +50,7 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
       <string>{model_key}</string>
       <string>-B</string>
       <string>{bind}</string>
-      <string>-l</string>
+      <string>-L</string>
       <string>{log_level}</string>
     </array>
 
@@ -141,6 +141,8 @@ def setup_service(
 ) -> bool:
     """Install service on the current platform."""
     base_dir = Path(base_dir).resolve()
+    if not base_dir.exists():
+        base_dir.mkdir(parents=True, exist_ok=True)
     if not base_dir.is_dir():
         raise NotADirectoryError(f'Base directory {base_dir} does not exist.')
 

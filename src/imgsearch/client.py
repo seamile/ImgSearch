@@ -258,7 +258,7 @@ def create_parser() -> ArgumentParser:
         help=f'Search images {ut.bold("(default)")}',
         formatter_class=DefaultFmt,
     )
-    cmd_search.add_argument('-m', dest='sim_thr', type=int, default=0, help='Similarity threshold, 0 - 100')
+    cmd_search.add_argument('-t', dest='sim_thr', type=int, default=0, help='Similarity threshold, 0 - 100')
     cmd_search.add_argument('-n', dest='num', type=int, default=10, help='Number of search results')
     cmd_search.add_argument('-o', dest='open_res', action='store_true', help='Open the searched images')
     cmd_search.add_argument('target', nargs='?', help='Search target (image path or keyword)')
