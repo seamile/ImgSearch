@@ -25,20 +25,22 @@ dependencies = [
     "pillow>=11.3.0",
     "psutil>=7.1.0",
     "pyro5>=5.15",
-    # NumPy with version constraints
-    "numpy<2; sys_platform=='darwin' and platform_machine=='x86_64'",
-    "numpy>=1.24.0; sys_platform!='darwin' or platform_machine!='x86_64'",
-    # PyTorch dependencies with platform-specific versions
+]
+[project.optional-dependencies]
+all = [
+    # PyTorch
     "torch==2.2.2; sys_platform=='darwin' and platform_machine=='x86_64'",
     "torch>=2.8.0; sys_platform!='darwin' or platform_machine!='x86_64'",
     "torchvision>=0.17.2", # dependi: disable-check
+    # NumPy
+    "numpy<2; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "numpy>=1.24.0; sys_platform!='darwin' or platform_machine!='x86_64'",
     # TinyCLIP dependencies
     "ftfy>=6.3.1",
     "regex>=2025.9.18",
     "tqdm>=4.67.1",
     "huggingface-hub>=0.35.0",
 ]
-
 [dependency-groups]
 dev = [
     "ipython>=9.5.0",

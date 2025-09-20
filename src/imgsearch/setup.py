@@ -23,8 +23,8 @@ Restart=on-failure
 RestartSec=30
 SyslogIdentifier=isearch
 OOMScoreAdjust=-500
-MemoryMax=1500M
-MemoryHigh=960M
+MemoryMax=2048M
+MemoryHigh=1280M
 ProtectSystem=strict
 
 [Install]

@@ -15,24 +15,34 @@ ImgSearch is a lightweight image search engine that supports image-to-image and 
 
 ## Installation
 
-### Standard Installation
+### Full Installation (Client + Server)
 
-ImgSearch relies on TinyCLIP models (built on OpenCLIP), which require PyTorch. The standard installation automatically pulls in the CUDA version of PyTorch. This is recommended for users with NVIDIA GPUs to speed up image inference.
+To use the full functionality of ImgSearch (including client and server), you need to specify the `all` dependency group during installation. This will install all the dependency packages required to run the server, such as `PyTorch`, on the system.
+
+```shell
+pip install 'imgsearch[all]'
+```
+
+### Standard Installation (Client Only)
+
+The standard installation includes only the client-side dependencies:
 
 ```shell
 pip install imgsearch
 ```
 
-### CPU Environment
+**⚠️ Note**: Since the standard installation lacks PyTorch and other dependencies, you cannot run the `isearch service start` command.
 
-For non-CUDA environments, install the CPU version of PyTorch first, then install ImgSearch:
+### Non-CUDA environment
+
+For users in non-CUDA environments who want to run the server, it is recommended to install the CPU version of PyTorch first, and then install ImgSearch:
 
 ```shell
 # Install CPU version of PyTorch
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Install ImgSearch
-pip install imgsearch
+pip install 'imgsearch[all]'
 ```
 
 If using uv as your Python package manager:
@@ -309,30 +319,40 @@ ImgSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描�
 
 ## 安装
 
-### 标准安装
+### 完整安装（客户端 + 服务端）
 
-ImgSearch 使用的 TinyCLIP 模型（基于 OpenCLIP）依赖 PyTorch。标准安装时，pip 会自动安装 CUDA 版的 PyTorch。建议使用 NVIDIA 显卡的用户选择这种方式以加速图像推理过程。
+要使用 ImgSearch 的完整功能（包含客户端和服务端），需要在安装时指定 `all` 依赖组，这会将服务端运行所需的 `PyTorch` 等依赖包全部安装到系统上：
+
+```shell
+pip install 'imgsearch[all]'
+```
+
+### 标准安装（仅客户端）
+
+标准安装仅包含客户端所需的依赖：
 
 ```shell
 pip install imgsearch
 ```
 
-### CPU 环境安装
+**⚠️ 注意**：由于标准安装缺少 Pytorch 等依赖项，所以无法执行 `isearch service start` 命令。
 
-对于非 CUDA 环境的用户，建议先安装 CPU 版 PyTorch，然后再安装 imgsearch：
+### 非 CUDA 环境
+
+对于非 CUDA 环境的用户如果要运行服务端时，建议先安装 CPU 版 PyTorch，然后再安装 ImgSearch：
 
 ```shell
 # 安装 CPU 版 PyTorch
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # 安装 ImgSearch
-pip install imgsearch
+pip install 'imgsearch[all]'
 ```
 
 使用 uv 作为 Python 包管理工具的可以这样安装：
 
 ```shell
-uv pip install --torch-backend cpu imgsearch
+uv pip install --torch-backend cpu 'imgsearch[all]'
 ```
 
 ## 使用方法

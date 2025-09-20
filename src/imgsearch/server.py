@@ -409,6 +409,9 @@ class Server:
             self.logger.debug(f'Model     : {self.model_key}')
 
             self.daemon.requestLoop()
+        except ImportError as e:
+            self.logger.error(f'Missing optional dependencies: {e}')
+            self.logger.error("Run `pip install 'imgsearch[all]'` for a full install.")
         except Exception as e:
             self.logger.error(f'Server failed to start: {e}')
         finally:
