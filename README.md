@@ -1,8 +1,8 @@
-# ImgSearch
+# ImgSearch - Lightweight Reverse Image Search Engine
 
-[🇬🇧 English](#imgsearch) ⇌ [🇨🇳 中文](#imgsearch-图像搜索引擎)
+[🇬🇧 English](#imgsearch---lightweight-reverse-image-search-engine) ⇌ [🇨🇳 中文](#imgsearch-反向图片搜索引擎)
 
-ImgSearch is a lightweight image search engine that supports image-to-image and text-to-image searches. Built on [TinyCLIP](https://github.com/wkcn/TinyCLIP) and [HNSWlib](https://github.com/nmslib/hnswlib), it's fast and resource-efficient, running on devices with just 2GB of RAM. Use it standalone or integrate it as a Python library.
+ImgSearch is a lightweight reverse image search engine that supports search by image or text. Built on [TinyCLIP](https://github.com/wkcn/TinyCLIP) and [HNSWlib](https://github.com/nmslib/hnswlib), it's fast and resource-efficient, running on devices with just 2GB of RAM. Use it standalone or integrate it as a Python library.
 
 ## Features
 
@@ -302,11 +302,11 @@ isearch service start -m NEW_MODEL_KEY
 
 ---
 
-# ImgSearch 图像搜索引擎
+# ImgSearch 反向图片搜索引擎
 
-[🇨🇳 中文](#imgsearch-图像搜索引擎) ⇌ [🇬🇧 English](#imgsearch)
+[🇨🇳 中文](#imgsearch-反向图片搜索引擎) ⇌ [🇬🇧 English](#imgsearch---lightweight-reverse-image-search-engine)
 
-ImgSearch 是一款轻量级图片搜索引擎，支持以图搜图和文字描述搜图。基于 [TinyCLIP](https://github.com/wkcn/TinyCLIP) 和 [HNSWlib](https://github.com/nmslib/hnswlib) 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
+ImgSearch 是一款轻量级的反向图片搜索引擎，支持以图搜图和文字描述搜图。基于 [TinyCLIP](https://github.com/wkcn/TinyCLIP) 和 [HNSWlib](https://github.com/nmslib/hnswlib) 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
 
 ## 特性
 

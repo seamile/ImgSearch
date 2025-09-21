@@ -1,8 +1,17 @@
 [project]
 name = "imgsearch"
 dynamic = ["version"]
-description = "ImgSearch is a lightweight image search engine that supports searching images by image."
-keywords = ["image-search-engine", "search-by-image", "hnsw", "tinyclip"]
+description = "ImgSearch is a lightweight reverse image search engine built on TinyCLIP and HNSWlib."
+keywords = [
+    "image-search",
+    "search-by-image",
+    "reverse-image-search",
+    "image-recognition",
+    "hnsw",
+    "clip",
+    "open-clip",
+    "tiny-clip"
+]
 readme = "README.md"
 license-files = ["LICENSE"]
 authors = [{ name = "Seamile", email = "lanhuermao@gmail.com" }]
