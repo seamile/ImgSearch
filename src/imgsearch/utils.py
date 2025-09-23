@@ -3,11 +3,12 @@ import os
 import platform
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from io import BytesIO
 from itertools import islice
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from typing import TypeVar
 
 from PIL import Image
 
@@ -16,6 +17,7 @@ from imgsearch.config import BASE_DIR
 EXTENSIONS = Image.registered_extensions().keys()
 
 Feature = list[float]
+HashableT = TypeVar('HashableT', bound=Hashable)
 
 
 def colorize(text: str, color: str = '', bold=False) -> str:
@@ -189,3 +191,29 @@ def open_images(paths: Sequence[str | Path]):
             subprocess.run(['xdg-open', *paths])
     except Exception as e:
         print_err(f'Failed to open images: {e}')
+
+
+def multi_remove(lst: list[HashableT], values: list[HashableT]) -> list[int]:
+    """Remove multiple values from a list"""
+    value_set = set(values)
+    removed_indices, kept = [], []
+    for i, v in enumerate(lst):
+        if v in value_set:
+            removed_indices.append(i)
+        else:
+            kept.append(v)
+    lst[:] = kept  # In-place modification
+    return removed_indices
+
+
+def multi_pop(lst: list, indices: list[int]):
+    """Pop multiple indices from a list"""
+    idx_set = set(indices)  # O(1)
+    removed, kept = [], []
+    for i, v in enumerate(lst):
+        if i in idx_set:
+            removed.append(v)
+        else:
+            kept.append(v)
+    lst[:] = kept  # In-place modification
+    return removed

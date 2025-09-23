@@ -15,6 +15,7 @@ Limitations:
 - Pickle serialization (security risk for untrusted data).
 """
 
+from collections.abc import Iterable
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
 from threading import RLock
@@ -23,7 +24,7 @@ from bidict import bidict
 from hnswlib import Index
 
 from imgsearch import config as cfg
-from imgsearch.utils import Feature, ibatch
+from imgsearch.utils import Feature, ibatch, multi_pop, multi_remove
 
 # Type alias for ID-label mapping
 Mapping = bidict[int, str]
@@ -107,18 +108,6 @@ class VectorDB:
         """Get next max elements for resizing index"""
         return self.index.max_elements + cfg.CAPACITY
 
-    def has_id(self, id: int) -> bool:  # noqa: A002
-        """Check if id exists in index"""
-        return id in self.index.get_ids_list()
-
-    def has_label(self, label: str) -> bool:
-        """Check if label exists in index"""
-        return label in self.mapping.inv
-
-    def has_labels(self, *labels: str) -> list[bool]:
-        """Check if labels exists in index"""
-        return [label in self.mapping.inv for label in labels]
-
     @staticmethod
     def new_index(
         init=True,
@@ -169,38 +158,87 @@ class VectorDB:
 
         return index, mapping
 
-    def add_item(self, label: str, feature: Feature):
+    def add_item(self, label: str, feature: Feature, overwrite: bool = True) -> bool:
         """Add one item to index"""
-        # Check if we need to resize the index
-        if self.size >= self.capacity:
-            self.index.resize_index(self.next_capacity)
+        with self.wlock:
+            if label in self.mapping.inv:
+                if not overwrite:
+                    return False
+                fid = self.mapping.inv[label]
+            else:
+                # Check if we need to resize the index
+                if self.size >= self.capacity:
+                    self.index.resize_index(self.next_capacity)
 
-        # Add the feature vector to the index
-        item_id = self.next_id
-        self.index.add_items([feature], [item_id], replace_deleted=True)
-        self.mapping[item_id] = label
+                # Add the feature vector to the index
+                fid = self.next_id
+                self.mapping[fid] = label
+            self.index.add_items([feature], [fid], replace_deleted=True)
+            self.save()
+            return True
 
-    def add_items(self, labels: list[str], features: list[Feature]):
+    def add_items(self, labels: list[str], features: list[Feature], *, overwrite: bool = True) -> int:
         """Add multiple items to index"""
-        # TODO:
-        # Check whether the label already exists. If override is True,
-        # overwrite the old values, otherwise ignore existing labels
+        if len(labels) != len(features):
+            raise ValueError('Labels and features must be of the same length')
 
-        incr_size = len(features)
-        if incr_size <= 0 or len(labels) != incr_size:
-            raise ValueError('Invalid labels or features')
+        updated = 0
+        with self.wlock:
+            # Filter out existing labels
+            if existing_labels := sorted(self.mapping.inv.keys() & set(labels)):
+                indices = multi_remove(labels, existing_labels)
+                features_to_overwrite = multi_pop(features, indices)
+                if len(existing_labels) != len(features_to_overwrite):
+                    raise ValueError('`existing_labels` and `features_to_overwrite` must be of the same length')
 
-        # Check if we need to resize the index
-        if self.size + incr_size > self.capacity:
-            self.index.resize_index(self.next_capacity)
+                # Overwrite existing features
+                if overwrite:
+                    existing_ids = [self.mapping.inv[label] for label in existing_labels]
+                    self.index.add_items(features_to_overwrite, existing_ids, replace_deleted=True)
+                    updated += len(existing_labels)
 
-        # Prepare IDs and update mapping
-        ids = list(range(self.next_id, self.next_id + incr_size))
-        for i, label in enumerate(labels):
-            self.mapping[self.next_id + i] = label
+            incr_size = len(features)
+            if incr_size > 0 and len(labels) == incr_size:
+                # Check if we need to resize the index
+                if self.size + incr_size > self.capacity:
+                    self.index.resize_index(self.next_capacity)
 
-        # Add features to index
-        self.index.add_items(features, ids, replace_deleted=True)
+                # Prepare IDs and update mapping
+                ids = list(range(self.next_id, self.next_id + incr_size))
+                for i, label in enumerate(labels):
+                    self.mapping[self.next_id + i] = label
+
+                # Add features to index
+                self.index.add_items(features, ids, replace_deleted=True)
+                updated += incr_size
+
+            if updated:
+                self.save()
+
+            return updated
+
+    def get(self, key: int | str) -> Feature:
+        """Get feature vector for id or label"""
+        return self[key]
+
+    def get_by_ids(self, ids: list[int]) -> list[Feature]:
+        """Get feature vectors for multiple ids"""
+        try:
+            return self.index.get_items(ids).tolist()  # type: ignore
+        except RuntimeError as e:
+            raise KeyError('Some ids were not found') from e
+
+    def get_by_labels(self, labels: list[str]) -> list[Feature]:
+        """Get feature vectors for multiple labels"""
+        try:
+            ids = [self.mapping.inv[label] for label in labels]
+            return self.index.get_items(ids).tolist()  # type: ignore
+        except (KeyError, RuntimeError) as e:
+            raise KeyError('Some labels were not found') from e
+
+    def has_labels(self, labels: Iterable[str]) -> list[bool]:
+        """Check if labels exist in index"""
+        return [label in self.mapping.inv for label in labels]
 
     def save(self):
         """Save database to file"""
