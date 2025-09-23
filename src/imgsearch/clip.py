@@ -91,7 +91,7 @@ class Clip:
             return torch.device('cpu')
 
     @staticmethod
-    def load_model(model_key: str = cfg.DEFAULT_MODEL_KEY):
+    def load_model(model_key: str):
         """Load CLIP model and processor"""
         model_name, pretrained, _ = cfg.MODELS[model_key]
         model, _, processor = create_model_and_transforms(model_name, pretrained=pretrained)

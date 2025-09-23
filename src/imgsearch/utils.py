@@ -122,8 +122,14 @@ def find_all_images(paths: str | Path | Sequence[str | Path], recursively=True, 
 
 def ibatch(iterable, batch_size):
     """Batch iterator"""
-    it = iter(iterable)
-    while batch := list(islice(it, batch_size)):
+    if batch_size <= 0:
+        raise ValueError('Batch size must be greater than 0')
+
+    if not iterable:
+        yield []
+
+    iter_data = iter(iterable)
+    while batch := list(islice(iter_data, batch_size)):
         yield batch
 
 

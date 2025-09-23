@@ -15,6 +15,7 @@ Limitations:
 - Pickle serialization (security risk for untrusted data).
 """
 
+import shutil
 from collections.abc import Iterable
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
@@ -64,12 +65,12 @@ class VectorDB:
 
     def __len__(self) -> int:
         """Get number of items in index"""
-        return self.index.element_count
+        return len(self.mapping)
 
     def __contains__(self, key: int | str) -> bool:
         """Check if id or label exists in index"""
         if isinstance(key, int):
-            return key in self.index.get_ids_list()
+            return key in self.mapping
         else:
             return key in self.mapping.inv
 
@@ -91,7 +92,7 @@ class VectorDB:
     @property
     def size(self) -> int:
         """Get number of items in index"""
-        return self.index.element_count
+        return len(self)
 
     @property
     def next_id(self) -> int:
@@ -151,7 +152,8 @@ class VectorDB:
                 mapping = bidict(mapping)
 
             # check if the index and mapping files are consistent
-            if index.element_count != len(mapping):
+            feature_ids = mapping.keys()
+            if feature_ids != feature_ids & index.get_ids_list():
                 raise ValueError('Index and mapping files are not consistent')
         else:
             raise OSError('DB file may be corrupted')
@@ -250,12 +252,30 @@ class VectorDB:
             with self.map_path.open('wb') as f:
                 dump(self.mapping, f, protocol=HIGHEST_PROTOCOL)
 
+    def delete(self, *keys: int | str, rebuild: bool = False):
+        """Delete items from index and rebuild index if needed"""
+        with self.wlock:
+            for key in keys:
+                fid = key if isinstance(key, int) else self.mapping.inv[key]
+                self.index.mark_deleted(fid)
+                del self.mapping[fid]
+            if rebuild:
+                self.rebuild(self.dim, self.index.ef_construction, self.index.M)
+            self.save()
+
     def clear(self):
         """Clear database"""
         with self.wlock:
             self.index = self.new_index(dim=self.dim)
             self.mapping = bidict()
             self.save()
+
+    @classmethod
+    def drop(cls, db_name: str, base_dir: Path = cfg.BASE_DIR):
+        """Drop database"""
+        db_path = base_dir / db_name
+        if db_path.exists():
+            shutil.rmtree(db_path)
 
     def db_list(self) -> list[str]:
         """List all available database names in base directory."""
@@ -270,17 +290,25 @@ class VectorDB:
 
         return sorted(databases)
 
-    def rebuild_index(self, ef: int, max_conn: int):
-        """Rebuild index with new ef parameter"""
-        old_index = self.index
-        new_index = self.new_index(init=True, dim=self.dim, max_elements=self.capacity, ef=ef, max_conn=max_conn)
-        ids = old_index.get_ids_list()
-        if len(ids) > 0:
-            for batch_ids in ibatch(ids, batch_size=1000):
-                vectors_batch = old_index.get_items(batch_ids)
-                new_index.add_items(vectors_batch, batch_ids, replace_deleted=True)
-        self.index = new_index
-        self.save()
+    def rebuild(self, dim: int = 512, ef: int = 400, max_conn: int = 32, n_batch=50000):
+        """Rebuild index and mapping"""
+        new_index = self.new_index(True, dim, self.capacity, ef, max_conn)
+        new_mapping: bidict[int, str] = bidict()
+
+        with self.wlock:
+            if self.mapping:
+                for n, batch_ids in enumerate(ibatch(self.mapping, n_batch)):
+                    # add batch features to new index
+                    batch_features = self.index.get_items(batch_ids)
+                    new_ids = [n * n_batch + i for i in range(len(batch_ids))]
+                    new_index.add_items(batch_features, new_ids, replace_deleted=True)
+                    # update to new mapping
+                    batch_labels = [self.mapping[fid] for fid in batch_ids]
+                    new_mapping.update(zip(new_ids, batch_labels, strict=True))
+
+            self.index = new_index
+            self.mapping = new_mapping
+            self.save()
 
     def search(self, feature: Feature, k: int = 10, similarity: float = 0.0) -> list[tuple[str, float]]:
         """Search items by feature vector with similarity filtering"""
