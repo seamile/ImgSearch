@@ -93,7 +93,7 @@ class Clip:
     @staticmethod
     def load_model(model_key: str = cfg.DEFAULT_MODEL_KEY):
         """Load CLIP model and processor"""
-        model_name, pretrained = cfg.MODELS[model_key]
+        model_name, pretrained, _ = cfg.MODELS[model_key]
         model, _, processor = create_model_and_transforms(model_name, pretrained=pretrained)
         tokenizer = get_tokenizer(model_name)
         return model, processor, tokenizer  # type: ignore

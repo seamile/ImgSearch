@@ -15,17 +15,17 @@ Wants=network.target
 [Service]
 User={username}
 Group={usergroup}
-WorkingDirectory={base_dir}
+WorkingDirectory="{base_dir}"
 Environment=PATH={py_bin}:/usr/local/bin:/usr/bin:/bin
 ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -L {log_level}
-ExecStop=kill $MAINPID
 Restart=on-failure
-RestartSec=30
+TimeoutStopSec=10s
 SyslogIdentifier=isearch
 OOMScoreAdjust=-500
-MemoryMax=2048M
-MemoryHigh=1280M
+MemoryMax=2560M
 ProtectSystem=strict
+ReadWritePaths="{base_dir}"
+TemporaryFileSystem=/tmp:noexec
 
 [Install]
 WantedBy=multi-user.target

@@ -2,31 +2,22 @@
 
 This module implements a lightweight vector database using HNSWLIB for approximate
 nearest neighbor search and bidict for label-ID mapping. Supports persistence via
-binary index files and pickled mappings. Designed for CLIP embeddings (512-dim,
-cosine similarity).
+binary index files and pickled mappings.
 
 Architecture:
 - HNSW Index: Hierarchical Navigable Small World graph for fast ANN search.
-  - Space: 'cosine' for normalized vectors.
-  - Params: ef_construction=400 (build quality), M=32 (connections), allow_replace_deleted=True.
 - Bidict Mapping: Maintains bidirectional ID<->label lookup for O(1) access.
 - Persistence: index.db (HNSW binary), mapping.db (pickled dict).
 - Auto-resize: Increases capacity by 10k when full (initial cfg.CAPACITY=10k).
 
-Usage:
-    db = VectorDB('my_db')
-    db.add_items(labels, features)  # Add CLIP vectors
-    results = db.search(query_feature, k=10, similarity=80)  # Top-k with threshold
-    db.save()  # Persist changes
-
 Limitations:
 - Single-threaded writes (no distributed locking).
 - Pickle serialization (security risk for untrusted data).
-- Fixed dim=512 (CLIP-specific).
 """
 
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL, dump, load
+from threading import RLock
 
 from bidict import bidict
 from hnswlib import Index
@@ -41,24 +32,17 @@ Mapping = bidict[int, str]
 class VectorDB:
     """Vector database using HNSW for ANN search and bidict for label mapping.
 
-    Stores 512-dim CLIP features with cosine similarity. Supports batch add/search,
+    Stores CLIP features with cosine similarity. Supports batch add, search,
     auto-resizing index, persistence, and duplicate checking. Thread-safe for reads;
     external locking needed for concurrent writes.
 
-    Lifecycle:
-    - Init: Loads or creates index/mapping from files.
-    - Add: Embeds labels/features, resizes if needed, updates mapping.
-    - Search: Dynamic ef adjustment based on k for balance speed/accuracy.
-    - Save: Writes index binary and pickled mapping.
-    - Clear: Resets to empty state.
-
     Example:
-        db = VectorDB('search_db')
+        db = VectorDB('search_db', dim=512)
         db.add_items(['img1', 'img2'], [[0.1]*512, [0.2]*512])
         matches = db.search([0.15]*512, k=5, similarity=70)
     """
 
-    def __init__(self, db_name: str = cfg.DB_NAME, base_dir: Path = cfg.BASE_DIR) -> None:
+    def __init__(self, db_name: str = cfg.DB_NAME, base_dir: Path = cfg.BASE_DIR, dim: int = 512) -> None:
         """Initialize or load VectorDB instance.
 
         Creates paths, loads existing DB if files present, or initializes empty.
@@ -70,21 +54,52 @@ class VectorDB:
         """
         self.name = db_name
         self.base = base_dir
+        self.dim = dim
         self.path = (base_dir / db_name).resolve()
         self.idx_path = self.path / cfg.IDX_NAME  # HNSW index file
         self.map_path = self.path / cfg.MAP_NAME  # Label mapping file
-        self.index, self.mapping = self.load_db(self.path)
+        self.index, self.mapping = self.load_db(self.path, dim)
+        self.wlock = RLock()
+
+    def __len__(self) -> int:
+        """Get number of items in index"""
+        return self.index.element_count
+
+    def __contains__(self, key: int | str) -> bool:
+        """Check if id or label exists in index"""
+        if isinstance(key, int):
+            return key in self.index.get_ids_list()
+        else:
+            return key in self.mapping.inv
+
+    def __getitem__(self, key: int | str) -> Feature:
+        """Get feature vector for id or label"""
+        try:
+            if isinstance(key, int):
+                features = self.index.get_items([key])
+            else:
+                fid = self.mapping.inv[key]
+                features = self.index.get_items([fid])
+        except (RuntimeError, KeyError) as e:
+            raise KeyError(f'Feature id or label "{key}" not found') from e
+
+        if len(features) != 1:
+            raise KeyError(f'Feature id or label "{key}" not found')
+        return features[0].tolist()  # type: ignore
 
     @property
     def size(self) -> int:
+        """Get number of items in index"""
         return self.index.element_count
 
     @property
     def next_id(self) -> int:
+        """Get next id for adding item"""
         return self.index.element_count + 1
 
     @property
     def capacity(self) -> int:
+        """Get current max elements for index"""
         return self.index.max_elements
 
     @property
@@ -107,11 +122,13 @@ class VectorDB:
     @staticmethod
     def new_index(
         init=True,
+        dim: int = 512,
         max_elements: int = cfg.CAPACITY,
         ef: int = 400,
         max_conn: int = 32,
     ) -> Index:
-        index = Index(space='cosine', dim=512)
+        """Create new HNSW index"""
+        index = Index(space='cosine', dim=dim)
         if init is True:
             index.init_index(
                 max_elements=max_elements,
@@ -122,7 +139,7 @@ class VectorDB:
         return index
 
     @classmethod
-    def load_db(cls, db_path: Path | str) -> tuple[Index, Mapping]:
+    def load_db(cls, db_path: Path | str, dim: int = 512) -> tuple[Index, Mapping]:
         """Load database from file, or create a new one if not exist"""
         if isinstance(db_path, str):
             db_path = Path(db_path)
@@ -131,11 +148,11 @@ class VectorDB:
         idx_path = db_path / cfg.IDX_NAME
         map_path = db_path / cfg.MAP_NAME
         if not idx_path.exists() and not map_path.exists():
-            index = cls.new_index(init=True)
+            index = cls.new_index(init=True, dim=dim)
             mapping: Mapping = bidict()
         elif idx_path.is_file() and map_path.is_file():
             # load index file
-            index = cls.new_index(init=False)
+            index = cls.new_index(init=False, dim=dim)
             index.load_index(str(idx_path), allow_replace_deleted=True)  # type: ignore
 
             # load mapping file
@@ -187,18 +204,20 @@ class VectorDB:
 
     def save(self):
         """Save database to file"""
-        # Save index
-        self.index.save_index(str(self.idx_path))
+        with self.wlock:
+            # Save index
+            self.index.save_index(str(self.idx_path))
 
-        # Save mapping
-        with self.map_path.open('wb') as f:
-            dump(self.mapping, f, protocol=HIGHEST_PROTOCOL)
+            # Save mapping
+            with self.map_path.open('wb') as f:
+                dump(self.mapping, f, protocol=HIGHEST_PROTOCOL)
 
     def clear(self):
         """Clear database"""
-        self.index = self.new_index()
-        self.mapping = bidict()
-        self.save()
+        with self.wlock:
+            self.index = self.new_index(dim=self.dim)
+            self.mapping = bidict()
+            self.save()
 
     def db_list(self) -> list[str]:
         """List all available database names in base directory."""
@@ -216,7 +235,7 @@ class VectorDB:
     def rebuild_index(self, ef: int, max_conn: int):
         """Rebuild index with new ef parameter"""
         old_index = self.index
-        new_index = self.new_index(init=True, max_elements=self.capacity, ef=ef, max_conn=max_conn)
+        new_index = self.new_index(init=True, dim=self.dim, max_elements=self.capacity, ef=ef, max_conn=max_conn)
         ids = old_index.get_ids_list()
         if len(ids) > 0:
             for batch_ids in ibatch(ids, batch_size=1000):

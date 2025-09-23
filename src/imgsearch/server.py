@@ -51,7 +51,6 @@ class RPCService:
         self.base_dir = base_dir
         self.model_key = model_key
         self.databases: dict[str, VectorDB] = {}
-        self._lock = threading.Lock()
         self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
         # Async processing queue - now includes db_name
@@ -74,24 +73,24 @@ class RPCService:
         """Get database instance"""
         if db_name not in self.databases:
             self.logger.debug(f'Loading database: {db_name}')
-            self.databases[db_name] = VectorDB(db_name, self.base_dir)
+            dim = cfg.MODELS[self.model_key][2]
+            self.databases[db_name] = VectorDB(db_name, self.base_dir, dim)
         return self.databases[db_name]
 
     def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = cfg.DB_NAME) -> list[bool]:
         """Check if multiple labels exist in the database"""
         db = self._get_db(db_name)
-        return db.has_labels(*labels)
+        return db.has_labels(labels)
 
     def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
         self.logger.debug(f'Processing batch of {len(images)} images ({db_name})')
         try:
+            # Embed images
             features = self.clip.embed_images(images)
-
-            with self._lock:
-                db = self._get_db(db_name)
-                db.add_items(labels, features)
-                db.save()
+            # Add features to database
+            db = self._get_db(db_name)
+            db.add_items(labels, features, overwrite=True)
 
             self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.size=})')
 
@@ -260,10 +259,9 @@ class RPCService:
         self.logger.warning(f'[Clear] Clear database: {db_name}')
         try:
             db = self._get_db(db_name)
-            with self._lock:
-                db.clear()
-                self.logger.debug(f'Database {db_name} cleared')
-                return True
+            db.clear()
+            self.logger.debug(f'Database {db_name} cleared')
+            return True
         except Exception as e:
             self.logger.error(f'Failed to clear database: {e}')
             return False

@@ -49,21 +49,21 @@ Database Structure:
 
 from pathlib import Path
 
-# CLIP Model Variants (name: (model_id, pretrained_weights))
+# CLIP Model Variants (name: (model_id, pretrained_weights, dim))
 # Models from TinyCLIP family: lightweight alternatives to OpenAI CLIP
 # Selection balances speed, accuracy, and resource usage
 MODELS = {
-    'ViT-8Y': ('TinyCLIP-ViT-8M-16-Text-3M', 'YFCC15M'),  # ~8M params, fastest, basic accuracy
-    'RN-19L': ('TinyCLIP-ResNet-19M-Text-19M', 'LAION400M'),
-    'ViT-22L': ('TinyCLIP-auto-ViT-22M-32-Text-10M', 'LAION400M'),
-    'RN-30L': ('TinyCLIP-ResNet-30M-Text-29M', 'LAION400M'),
-    'ViT-39Y': ('TinyCLIP-ViT-39M-16-Text-19M', 'YFCC15M'),
-    'ViT-40L': ('TinyCLIP-ViT-40M-32-Text-19M', 'LAION400M'),
-    'ViT-45L': ('TinyCLIP-auto-ViT-45M-32-Text-18M', 'LAION400M'),
-    'ViT-45LY': ('TinyCLIP-auto-ViT-45M-32-Text-18M', 'LAIONYFCC400M'),  # Default: balanced accuracy/speed
-    'ViT-61L': ('TinyCLIP-ViT-61M-32-Text-29M', 'LAION400M'),
-    'ViT-63L': ('TinyCLIP-auto-ViT-63M-32-Text-31M', 'LAION400M'),
-    'ViT-63LY': ('TinyCLIP-auto-ViT-63M-32-Text-31M', 'LAIONYFCC400M'),  # Best accuracy, most resource-intensive
+    'ViT-8Y': ('TinyCLIP-ViT-8M-16-Text-3M', 'YFCC15M', 512),  # ~8M params, fastest, basic accuracy
+    'RN-19L': ('TinyCLIP-ResNet-19M-Text-19M', 'LAION400M', 1024),
+    'RN-30L': ('TinyCLIP-ResNet-30M-Text-29M', 'LAION400M', 1024),
+    'ViT-22L': ('TinyCLIP-auto-ViT-22M-32-Text-10M', 'LAION400M', 512),
+    'ViT-39Y': ('TinyCLIP-ViT-39M-16-Text-19M', 'YFCC15M', 512),
+    'ViT-40L': ('TinyCLIP-ViT-40M-32-Text-19M', 'LAION400M', 512),
+    'ViT-45L': ('TinyCLIP-auto-ViT-45M-32-Text-18M', 'LAION400M', 512),
+    'ViT-45LY': ('TinyCLIP-auto-ViT-45M-32-Text-18M', 'LAIONYFCC400M', 512),  # Default: balanced accuracy/speed
+    'ViT-61L': ('TinyCLIP-ViT-61M-32-Text-29M', 'LAION400M', 512),
+    'ViT-63L': ('TinyCLIP-auto-ViT-63M-32-Text-31M', 'LAION400M', 512),
+    'ViT-63LY': ('TinyCLIP-auto-ViT-63M-32-Text-31M', 'LAIONYFCC400M', 512),  # Best accuracy, most resource-intensive
 }
 
 # Default model: ViT-45LY - optimal balance for most use cases (speed/accuracy/resources)
