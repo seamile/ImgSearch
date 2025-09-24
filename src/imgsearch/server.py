@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
 from queue import Full, Queue
-from typing import Any
+from typing import Any, ClassVar
 
 import psutil
 import Pyro5.server
@@ -34,6 +34,8 @@ class RPCService:
     All methods are thread-safe using a simple lock.
     """
 
+    databases: ClassVar[dict[str, VectorDB]] = {}
+
     def __init__(
         self,
         base_dir: Path = cfg.BASE_DIR,
@@ -50,7 +52,6 @@ class RPCService:
         """
         self.base_dir = base_dir
         self.model_key = model_key
-        self.databases: dict[str, VectorDB] = {}
         self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
         # Async processing queue - now includes db_name
@@ -221,14 +222,14 @@ class RPCService:
             List of database names found in the base directory
         """
         try:
-            db_list = self._get_db(cfg.DB_NAME).db_list()
+            db_list = VectorDB.db_list(self.base_dir)
             self.logger.debug(f'List dbs: {db_list}')
             return db_list
         except Exception as e:
             self.logger.error(f'Failed to list databases: {e}')
             return []
 
-    def handle_get_db_info(self, db_name: str = cfg.DB_NAME) -> dict:
+    def handle_get_db_info(self, db_name: str = cfg.DB_NAME) -> dict | None:
         """
         Get database information.
 
@@ -237,7 +238,11 @@ class RPCService:
 
         Returns:
             Dictionary containing database statistics (base_dir, size, capacity)
+            Returns None if database not found
         """
+        if db_name not in VectorDB.db_list(self.base_dir):
+            return None
+
         self.logger.debug(f'Get db info: {db_name}')
         db = self._get_db(db_name)
         return {
@@ -264,6 +269,25 @@ class RPCService:
             return True
         except Exception as e:
             self.logger.error(f'Failed to clear database: {e}')
+            return False
+
+    def handle_drop_db(self, db_name: str = cfg.DB_NAME) -> bool:
+        """
+        Drop a database.
+
+        Args:
+            db_name: Name of the database to drop
+
+        Returns:
+            True if successful, False otherwise
+        """
+        self.logger.warning(f'[Drop] Drop database: {db_name}')
+        try:
+            if db_name in self.databases:
+                del self.databases[db_name]
+            return VectorDB.drop(db_name, self.base_dir)
+        except Exception as e:
+            self.logger.error(f'Failed to drop database: {e}')
             return False
 
     def handle_compare_images(self, ibytes1: bytes, ibytes2: bytes) -> float:

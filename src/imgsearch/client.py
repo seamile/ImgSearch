@@ -189,13 +189,13 @@ class Client:
             ut.print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
             return []
 
-    def get_db_info(self) -> dict:
+    def get_db_info(self) -> dict | None:
         """Handle database info request."""
         try:
-            return self.service.handle_get_db_info(self.db_name)  # type: ignore
+            return self.service.handle_get_db_info(self.db_name)
         except Exception as e:
-            ut.print_err(f'Failed to get database info: {e} ({e.__class__.__name__})')
-            return {}
+            ut.print_err(f'{e.__class__.__name__}: {e}')
+            return None
 
     def clear_db(self) -> bool:
         """Handle database clear request."""
@@ -203,6 +203,14 @@ class Client:
             return self.service.handle_clear_db(self.db_name)  # type: ignore
         except Exception as e:
             ut.print_err(f'Failed to clear database: {e} ({e.__class__.__name__})')
+            return False
+
+    def drop_db(self) -> bool:
+        """Handle database drop request."""
+        try:
+            return self.service.handle_drop_db(self.db_name)  # type: ignore
+        except Exception as e:
+            ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
 
     def compare_images(self, path1: str, path2: str) -> float:
@@ -241,7 +249,13 @@ def create_parser() -> ArgumentParser:
     """Create command line argument parser."""
     # Common arguments
     arg_bind = ArgumentParser(add_help=False)
-    arg_bind.add_argument('-B', dest='bind', default=cfg.UNIX_SOCKET, help='Server bind address (UDS path or ip:port)')
+    arg_bind.add_argument(
+        '-B',
+        dest='bind',
+        default=cfg.UNIX_SOCKET,
+        metavar='ADDR',
+        help='Server bind address (UDS path or ip:port)',
+    )
     arg_db = ArgumentParser(add_help=False)
     arg_db.add_argument('-d', dest='db_name', default=cfg.DB_NAME, help='Database name')
 
@@ -311,11 +325,13 @@ def create_parser() -> ArgumentParser:
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
-    cmd_db = subcmd.add_parser('db', parents=[arg_bind, arg_db], help='Database management operations')
+    cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Database management operations')
+    cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Database name')
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
+    db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
     db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
     db_group.add_argument('-c', '--clear', action='store_true', help='Clear the entire database')
-    db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
+    db_group.add_argument('-D', '--drop', action='store_true', help='Drop the specified database')
 
     # Compare images subcommand
     cmd_cmp = subcmd.add_parser('cmp', parents=[arg_bind], help='Compare similarity of two images')
@@ -354,25 +370,45 @@ def main() -> None:  # noqa: C901
         client = Client(db_name=args.db_name, bind=args.bind)
         if args.list:
             if databases := client.list_dbs():
-                ut.print_inf('Available databases:', marked=True)
+                ut.print_inf('Databases:', marked=True)
                 for db_name in databases:
-                    ut.print_inf(f'* {db_name}')
+                    ut.print_inf(f' - {db_name}')
             else:
                 ut.print_warn('No databases found.')
+
         elif args.info:
             if info := client.get_db_info():
                 ut.print_inf(f'Database "{args.db_name}"', marked=True)
                 for key, value in info.items():
-                    ut.print_inf(f'* {ut.bold(key.title().replace("_", ""))}: {value}')
+                    ut.print_inf(f' - {ut.bold(key.title().replace("_", ""))}: {value}')
+            elif args.db_name is None:
+                ut.print_err('Database name is required.')
             else:
-                ut.print_err(f'Failed to get database info for "{args.db_name}".')
+                ut.print_err(f"Not found DB: '{args.db_name}'.")
+
         elif args.clear:
-            notice = ut.colorize(f'Are you sure to clear the database "{args.db_name}"? [y/N]: ', 'yellow', True)
+            if args.db_name is None:
+                ut.print_err('Database name is required.')
+                sys.exit(1)
+
+            notice = ut.colorize(f'Are you sure to clear the DB "{args.db_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
                 if client.clear_db():
-                    ut.print_inf(f'Database "{args.db_name}" has been cleared.')
+                    ut.print_inf(f'Database "{ut.colorize(args.db_name, "red")}" has been cleared.')
                 else:
-                    ut.print_err(f'Failed to clear the database "{args.db_name}".')
+                    ut.print_err(f'Failed to clear the DB "{args.db_name}".')
+
+        elif args.drop:
+            if args.db_name is None:
+                ut.print_err('Database name is required.')
+                sys.exit(1)
+
+            notice = ut.colorize(f'Are you sure to drop the DB "{args.db_name}"? [y/N]: ', 'yellow', True)
+            if input(notice).lower() == 'y':
+                if client.drop_db():
+                    ut.print_inf(f'Database "{ut.colorize(args.db_name, "red")}" has been dropped.')
+                else:
+                    ut.print_err(f'Failed to drop the DB "{args.db_name}".')
 
     elif args.command == 'search':
         client = Client(db_name=args.db_name, bind=args.bind)

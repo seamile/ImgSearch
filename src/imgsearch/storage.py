@@ -271,20 +271,26 @@ class VectorDB:
             self.save()
 
     @classmethod
-    def drop(cls, db_name: str, base_dir: Path = cfg.BASE_DIR):
-        """Drop database"""
+    def drop(cls, db_name: str, base_dir: Path = cfg.BASE_DIR) -> bool:
+        """Drop database. Returns True if successful, False otherwise."""
         db_path = base_dir / db_name
         if db_path.exists():
-            shutil.rmtree(db_path)
+            try:
+                shutil.rmtree(db_path)
+                return True
+            except OSError:
+                return False
+        return False
 
-    def db_list(self) -> list[str]:
+    @classmethod
+    def db_list(cls, base_dir: Path = cfg.BASE_DIR) -> list[str]:
         """List all available database names in base directory."""
-        if not self.base.exists():
+        if not base_dir.exists():
             return []
 
         databases: list[str] = [
             item.name
-            for item in self.base.iterdir()
+            for item in base_dir.iterdir()
             if item.is_dir() and (item / cfg.IDX_NAME).is_file() and (item / cfg.MAP_NAME).is_file()
         ]
 
