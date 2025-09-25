@@ -70,7 +70,7 @@ class RPCService:
 
         return Clip(model_key=self.model_key)
 
-    def _get_db(self, db_name: str = cfg.DB_NAME):
+    def _get_db(self, db_name: str):
         """Get database instance"""
         if db_name not in self.databases:
             self.logger.debug(f'Loading database: {db_name}')
@@ -89,7 +89,7 @@ class RPCService:
             'Model': self.model_key,
         }
 
-    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = cfg.DB_NAME) -> list[bool]:
+    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str) -> list[bool]:
         """Check if multiple labels exist in the database"""
         db = self._get_db(db_name)
         return db.has_labels(labels)
@@ -135,7 +135,7 @@ class RPCService:
                         self._process_images(batch_images, batch_labels, db_name)
                         batches[db_name] = ([], [])
 
-    def handle_add_images(self, images: dict[str, bytes], db_name: str = cfg.DB_NAME) -> int:
+    def handle_add_images(self, images: dict[str, bytes], db_name: str) -> int:
         """
         Add images to the search index.
 
@@ -240,7 +240,7 @@ class RPCService:
             self.logger.error(f'Failed to list databases: {e}')
             return []
 
-    def handle_get_db_info(self, db_name: str = cfg.DB_NAME) -> dict | None:
+    def handle_get_db_info(self, db_name: str) -> dict | None:
         """
         Get database information.
 
@@ -263,9 +263,20 @@ class RPCService:
             'size': db.index.index_file_size(),
         }
 
-    def handle_clear_db(self, db_name: str = cfg.DB_NAME) -> bool:
+    def handle_delete_images(self, keys: list[int | str], rebuild: bool, db_name: str):
+        """Delete images from the specified database."""
+        self.logger.warning(f'[Delete] Delete {len(keys)} images from {db_name} (rebuild={rebuild})')
+        try:
+            db = self._get_db(db_name)
+            db.delete(*keys, rebuild=rebuild)
+            return True
+        except Exception as e:
+            self.logger.error(f'Failed to delete images: {e}')
+            return False
+
+    def handle_clear_db(self, db_name: str) -> bool:
         """
-        Clear all images from the database.
+        Clear all images from the specified database.
 
         Args:
             db_name: Name of the database to clear
@@ -283,9 +294,9 @@ class RPCService:
             self.logger.error(f'Failed to clear database: {e}')
             return False
 
-    def handle_drop_db(self, db_name: str = cfg.DB_NAME) -> bool:
+    def handle_drop_db(self, db_name: str) -> bool:
         """
-        Drop a database.
+        Drop the specified database.
 
         Args:
             db_name: Name of the database to drop

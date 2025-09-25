@@ -160,6 +160,14 @@ class Client:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return None
 
+    def delete_images(self, labels: list[str], rebuild: bool = False) -> bool:
+        """Handle image deletion request."""
+        try:
+            return self.service.handle_delete_images(labels, rebuild, self.db_name)  # type: ignore
+        except Exception as e:
+            ut.print_err(f'{e.__class__.__name__}: {e}')
+            return False
+
     def clear_db(self) -> bool:
         """Handle database clear request."""
         try:
@@ -347,10 +355,12 @@ def create_parser() -> ArgumentParser:
 
     # Database management subcommand
     cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Database management operations')
+    cmd_db.add_argument('-r', '--rebuild', action='store_true', help='Rebuild index after deletion')
     cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Database name')
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
     db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
     db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
+    db_group.add_argument('-d', '--delete', nargs='+', metavar='LABEL', help='Delete images by label')
     db_group.add_argument('-c', '--clear', action='store_true', help='Clear the entire database')
     db_group.add_argument('-D', '--drop', action='store_true', help='Drop the specified database')
 
@@ -412,6 +422,20 @@ def main() -> None:  # noqa: C901
                 ut.print_err('Database name is required.')
             else:
                 ut.print_err(f"Not found DB: '{args.db_name}'.")
+
+        elif args.delete:
+            if args.db_name is None:
+                ut.print_err('Database name is required.')
+                sys.exit(1)
+
+            notice = ut.colorize(
+                f'Are you sure to delete {len(args.delete)} images from DB "{args.db_name}"? [y/N]: ', 'yellow', True
+            )
+            if input(notice).lower() == 'y':
+                if client.delete_images(args.delete, args.rebuild):
+                    ut.print_inf(f'Successfully deleted {len(args.delete)} images from DB "{ut.bold(args.db_name)}".')
+                else:
+                    ut.print_err(f'Failed to delete images from DB "{args.db_name}".')
 
         elif args.clear:
             if args.db_name is None:
