@@ -91,9 +91,11 @@ isearch service status
 
 Example output:
 ```
-ImgSearch service is running
-* PID: 12345
-* MEM: 256.3 MB
+iSearch service is running
+ - PID  : 86269
+ - MEM  : 1301.6 MB
+ - Base : /home/seamile/.isearch
+ - Model: ViT-45LY
 ```
 
 #### Running as a System Service
@@ -178,24 +180,10 @@ Found 5 similar images (similarity ≥ 70.0%):
 
 ### 4. Database Management
 
-#### View Database Info
-
-```shell
-isearch db --info
-```
-
-Example output:
-```
-Database "default"
-* Base: /home/user/.isearch
-* Size: 140915
-* Capacity: 150000
-```
-
 #### List All Databases
 
 ```shell
-isearch db --list
+isearch db -l
 ```
 
 Output:
@@ -206,14 +194,42 @@ Available databases:
 * test_db
 ```
 
+#### View Database Info
+
+```shell
+isearch db -i my_db
+```
+
+Example output:
+```
+Database "my_db"
+ - Base: /home/seamile/.isearch
+ - Capacity: 150000
+ - Count: 141610
+ - Size: 313.9 MB
+```
+
+#### Delete Specific Data
+
+```shell
+isearch db my_db --delete /path/to/img1.jpg /path/to/img2.jpg ...
+```
+
 #### Clear Database
 
 ```shell
 # Confirm then clear
-isearch db --clear -d my_db
+isearch db --clear my_db
 ```
 
-**⚠️ Warning**: This operation is irreversible and deletes all index data.
+#### Drop Database
+
+```shell
+# Confirm then drop
+isearch db --drop my_db
+```
+
+**⚠️ Warning**: All delete operations are irreversible. `--clear` deletes all data in the database, `--drop` deletes the database file.
 
 ### 5. Compare Two Images
 
@@ -394,8 +410,10 @@ isearch service status
 
 # 输出：
 iSearch service is running
-* PID: 12345
-* MEM: 256.3 MB
+ - PID  : 86269
+ - MEM  : 1301.6 MB
+ - Base : /home/seamile/.isearch
+ - Model: ViT-45LY
 ```
 
 #### 将 ImgSearch 作为系统服务在后台运行
@@ -481,24 +499,10 @@ Found 3 similar images (similarity ≥ 70%):
 
 ### 4. 数据库管理
 
-#### 查看数据库信息
-
-```shell
-isearch db --info
-```
-
-输出示例：
-```
-Database "default"
-* Base: /home/user/.isearch
-* Size: 140915
-* Capacity: 150000
-```
-
 #### 列出所有数据库
 
 ```shell
-isearch db --list
+isearch db -l
 ```
 
 输出：
@@ -509,14 +513,42 @@ Available databases:
 * test_db
 ```
 
+#### 查看数据库信息
+
+```shell
+isearch db -i my_db
+```
+
+输出示例：
+```
+Database "my_db"
+ - Base: /home/seamile/.isearch
+ - Capacity: 150000
+ - Count: 141610
+ - Size: 313.9 MB
+```
+
+#### 删除指定数据
+
+```shell
+isearch db my_db --delete /path/to/img1.jpg /path/to/img2.jpg ...
+```
+
 #### 清空数据库
 
 ```shell
 # 确认后清空
-isearch db --clear -d my_db
+isearch db --clear my_db
 ```
 
-**⚠️ 警告**：此操作不可逆，会删除所有索引数据。
+#### 删除数据库
+
+```shell
+# 确认后删除
+isearch db --drop my_db
+```
+
+**⚠️ 警告**：所有删除操作均不可逆，`--clear` 会删除数据库中所有数据，`--drop` 会删除数据库文件。
 
 ### 5. 比较两张图片
 
