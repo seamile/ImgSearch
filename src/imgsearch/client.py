@@ -1,3 +1,4 @@
+import re
 import sys
 from argparse import ArgumentDefaultsHelpFormatter as DefaultFmt
 from argparse import ArgumentParser
@@ -13,10 +14,13 @@ from PIL import Image
 from imgsearch import __version__
 from imgsearch import config as cfg
 from imgsearch import utils as ut
+from imgsearch.exceptions import NotRunningError
+from imgsearch.server import Server
 from imgsearch.setup import remove_service, setup_service
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 900_000_000
+NETLOC_PATTERN = re.compile(r'^([a-zA-Z0-9]+[.:])+([a-zA-Z0-9]+):[1-9]\d{3,4}$')
 _thread_local = local()
 
 
@@ -37,69 +41,28 @@ class Client:
     def service(self) -> Pyro5.api.Proxy:
         """Connect to the Pyro5 service via UDS and return the proxy object."""
         if not hasattr(_thread_local, 'service'):
-            bind_path = Path(self.bind)
-            if bind_path.is_socket():
-                if not bind_path.exists():
-                    ut.print_err(f"Service not running or socket file missing at '{self.bind}'.")
-                    ut.print_err("You can start the service with: 'isearch service start'")
-                    sys.exit(1)
-                uri = f'PYRO:{cfg.SERVICE_NAME}@./u:{self.bind}'
-            else:
+            if NETLOC_PATTERN.match(self.bind):
                 # Assume ip:port format
                 host, port = self.bind.split(':', 1)
                 uri = f'PYRO:{cfg.SERVICE_NAME}@{host}:{port}'
+            elif Path(self.bind).is_socket():
+                uri = f'PYRO:{cfg.SERVICE_NAME}@./u:{self.bind}'
+            else:
+                raise NotRunningError(f'Service not running or socket file missing at {self.bind}.')
 
             try:
                 # Configure Pyro5 to use msgpack serializer
                 Pyro5.config.SERIALIZER = 'msgpack'  # type: ignore
                 _thread_local.service = Pyro5.api.Proxy(uri)
                 _thread_local.service._pyroBind()  # A quick check to see if the server is responsive
-            except Pyro5.errors.CommunicationError:
-                ut.print_err(f"Failed to connect to service at '{self.bind}'.")
-                ut.print_err("Is the imgsearch service running? Check with: 'isearch service status'")
-                sys.exit(1)
-            except Exception as e:
-                ut.print_err(f'An unexpected error occurred while connecting to the service: {e}')
-                sys.exit(1)
+            except Pyro5.errors.CommunicationError as e:
+                raise NotRunningError(f'Service not running or socket file missing at {self.bind}.') from e
+
         return _thread_local.service
 
-    @staticmethod
-    def handle_service_command(
-        service_cmd: str,
-        base_dir: Path = cfg.BASE_DIR,
-        model_key: str = cfg.DEFAULT_MODEL_KEY,
-        bind: str = cfg.UNIX_SOCKET,
-        log_level: str = 'info',
-    ) -> None:
-        """Handle service management commands."""
-        match service_cmd:
-            case 'start' | 'stop' | 'status':
-                from imgsearch.server import Server
-
-                server = Server(base_dir, model_key, bind, log_level)
-                match service_cmd:
-                    case 'start':
-                        server.run()
-                    case 'stop':
-                        server.stop()
-                    case 'status':
-                        Server.status()
-
-            case 'setup' | 'remove':
-                try:
-                    msg = ut.bold(f'Are you sure to {service_cmd} isearch service? [y/N]: ')
-                    if input(msg).lower() != 'y':
-                        return
-                    elif service_cmd == 'setup' and setup_service(base_dir, model_key, bind, log_level):
-                        ut.print_inf(f'Service {service_cmd} completed successfully.')
-                    elif service_cmd == 'remove' and remove_service():
-                        ut.print_inf(f'Service {service_cmd} completed successfully.')
-                    else:
-                        ut.print_err(f'Failed to {service_cmd} isearch service.')
-                        sys.exit(1)
-                except Exception as e:
-                    ut.print_err(f'{service_cmd.title()} failed: {e}')
-                    sys.exit(1)
+    def service_status(self) -> dict:
+        """Get the status of the imgsearch service."""
+        return self.service.handle_status()  # type: ignore
 
     def _preprocess_images(self, batch: dict[str, str]) -> None:
         """Process a batch of image paths."""
@@ -186,7 +149,7 @@ class Client:
         try:
             return self.service.handle_list_dbs()  # type: ignore
         except Exception as e:
-            ut.print_err(f'Failed to list databases: {e} ({e.__class__.__name__})')
+            ut.print_err(f'{e.__class__.__name__}: {e}')
             return []
 
     def get_db_info(self) -> dict | None:
@@ -202,7 +165,7 @@ class Client:
         try:
             return self.service.handle_clear_db(self.db_name)  # type: ignore
         except Exception as e:
-            ut.print_err(f'Failed to clear database: {e} ({e.__class__.__name__})')
+            ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
 
     def drop_db(self) -> bool:
@@ -226,6 +189,64 @@ class Client:
         except Exception as e:
             ut.print_err(f'Failed to compare images: {e} ({e.__class__.__name__})')
             return 0
+
+
+def handle_service_command(  # noqa: C901
+    service_cmd: str,
+    base_dir: Path = cfg.BASE_DIR,
+    model_key: str = cfg.DEFAULT_MODEL_KEY,
+    bind: str = cfg.UNIX_SOCKET,
+    log_level: str = 'info',
+) -> None:
+    """Handle service management commands."""
+    match service_cmd:
+        case 'start' | 'stop' | 'status':
+            server = Server(base_dir, model_key, bind, log_level)
+            if service_cmd == 'start':
+                try:
+                    server.run()
+                except Exception as e:
+                    server.logger.error(f'{service_cmd.title()} failed: {e}')
+            elif service_cmd == 'stop':
+                try:
+                    server.stop()
+                except Exception as e:
+                    server.logger.error(f'{service_cmd.title()} failed: {e}')
+            else:
+                if not server.is_running():
+                    ut.print_err('iSearch service is not running')
+                    sys.exit(1)
+
+                try:
+                    client = Client(bind=bind)
+                    status: dict = client.service_status()
+                    ut.print_inf('iSearch service is running', marked=True)
+                    ut.print_inf(f' - {ut.bold("PID")}  : {status["PID"]}')
+                    ut.print_inf(f' - {ut.bold("MEM")}  : {status["Memory"] / 1024 / 1024:.1f} MB')
+                    ut.print_inf(f' - {ut.bold("Base")} : {status["Base"]}')
+                    ut.print_inf(f' - {ut.bold("Model")}: {status["Model"]}')
+                except NotRunningError:
+                    ut.print_err('iSearch service is not running')
+                    sys.exit(1)
+                except Exception as e:
+                    ut.print_err(f'{e.__class__.__name__}: {e}')
+                    sys.exit(1)
+
+        case 'setup' | 'remove':
+            try:
+                msg = ut.bold(f'Are you sure to {service_cmd} isearch service? [y/N]: ')
+                if input(msg).lower() != 'y':
+                    return
+                elif service_cmd == 'setup' and setup_service(base_dir, model_key, bind, log_level):
+                    ut.print_inf(f'Service {service_cmd} completed successfully.')
+                elif service_cmd == 'remove' and remove_service():
+                    ut.print_inf(f'Service {service_cmd} completed successfully.')
+                else:
+                    ut.print_err(f'Failed to {service_cmd} isearch service.')
+                    sys.exit(1)
+            except Exception as e:
+                ut.print_err(f'{service_cmd.title()} failed: {e}')
+                sys.exit(1)
 
 
 def shortcut_search(parser: ArgumentParser) -> set[str]:
@@ -352,8 +373,12 @@ def main() -> None:  # noqa: C901
 
     # Handle service subcommand
     if args.command == 'service':
-        Client.handle_service_command(
-            args.action, base_dir=args.base_dir, model_key=args.model_key, bind=args.bind, log_level=args.log_level
+        handle_service_command(
+            args.action,
+            base_dir=args.base_dir,
+            model_key=args.model_key,
+            bind=args.bind,
+            log_level=args.log_level,
         )
 
     elif args.command == 'add':
@@ -379,7 +404,9 @@ def main() -> None:  # noqa: C901
         elif args.info:
             if info := client.get_db_info():
                 ut.print_inf(f'Database "{args.db_name}"', marked=True)
-                for key, value in info.items():
+                for key, value in sorted(info.items()):
+                    if key == 'size':
+                        value = f'{value / 1024 / 1024:.1f} MB'
                     ut.print_inf(f' - {ut.bold(key.title().replace("_", ""))}: {value}')
             elif args.db_name is None:
                 ut.print_err('Database name is required.')

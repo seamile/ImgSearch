@@ -64,7 +64,7 @@ class VectorDB:
         self.wlock = RLock()
 
     def __len__(self) -> int:
-        """Get number of items in index"""
+        """Get number of items in mapping"""
         return len(self.mapping)
 
     def __contains__(self, key: int | str) -> bool:
@@ -91,7 +91,12 @@ class VectorDB:
 
     @property
     def size(self) -> int:
-        """Get number of items in index"""
+        """Get disk usage of index and mapping file"""
+        return self.idx_path.stat().st_size + self.map_path.stat().st_size
+
+    @property
+    def count(self) -> int:
+        """Get number of items in mapping"""
         return len(self)
 
     @property
@@ -169,7 +174,7 @@ class VectorDB:
                 fid = self.mapping.inv[label]
             else:
                 # Check if we need to resize the index
-                if self.size >= self.capacity:
+                if self.count >= self.capacity:
                     self.index.resize_index(self.next_capacity)
 
                 # Add the feature vector to the index
@@ -202,7 +207,7 @@ class VectorDB:
             incr_size = len(features)
             if incr_size > 0 and len(labels) == incr_size:
                 # Check if we need to resize the index
-                if self.size + incr_size > self.capacity:
+                if self.count + incr_size > self.capacity:
                     self.index.resize_index(self.next_capacity)
 
                 # Prepare IDs and update mapping
@@ -306,7 +311,7 @@ class VectorDB:
                 for n, batch_ids in enumerate(ibatch(self.mapping, n_batch)):
                     # add batch features to new index
                     batch_features = self.index.get_items(batch_ids)
-                    new_ids = [n * n_batch + i for i in range(len(batch_ids))]
+                    new_ids = [n * n_batch + i + 1 for i in range(len(batch_ids))]
                     new_index.add_items(batch_features, new_ids, replace_deleted=True)
                     # update to new mapping
                     batch_labels = [self.mapping[fid] for fid in batch_ids]
@@ -318,7 +323,7 @@ class VectorDB:
 
     def search(self, feature: Feature, k: int = 10, similarity: float = 0.0) -> list[tuple[str, float]]:
         """Search items by feature vector with similarity filtering"""
-        if self.index is None or self.size == 0 or not feature:
+        if self.index is None or self.count == 0 or not feature:
             return []
 
         # Validate similarity parameter
@@ -327,7 +332,7 @@ class VectorDB:
 
         # Set ef to a value between 150 and 300, depending on the number of results requested.
         # This is to ensure that the search is efficient and fast, without sacrificing accuracy.
-        search_k = min(k, self.size)
+        search_k = min(k, self.count)
         self.index.set_ef(min(max(search_k * 3, 150), 300))
         v_ids, distances = self.index.knn_query([feature], k=search_k)
 

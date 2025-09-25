@@ -16,7 +16,7 @@ from PIL import Image
 
 from imgsearch import config as cfg
 from imgsearch.storage import VectorDB
-from imgsearch.utils import bold, bytes2img, get_logger, print_err, print_inf
+from imgsearch.utils import bytes2img, get_logger, print_err, print_warn
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -78,6 +78,17 @@ class RPCService:
             self.databases[db_name] = VectorDB(db_name, self.base_dir, dim)
         return self.databases[db_name]
 
+    def handle_status(self) -> dict:
+        """Get service status, including physical memory usage (bytes)"""
+        pid = os.getpid()
+        mem = psutil.Process(pid).memory_info().rss
+        return {
+            'PID': pid,
+            'Memory': mem,
+            'Base': str(self.base_dir),
+            'Model': self.model_key,
+        }
+
     def handle_check_exist_labels(self, labels: Sequence[str], db_name: str = cfg.DB_NAME) -> list[bool]:
         """Check if multiple labels exist in the database"""
         db = self._get_db(db_name)
@@ -93,7 +104,7 @@ class RPCService:
             db = self._get_db(db_name)
             db.add_items(labels, features, overwrite=True)
 
-            self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.size=})')
+            self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.count=})')
 
         except Exception as e:
             self.logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
@@ -247,8 +258,9 @@ class RPCService:
         db = self._get_db(db_name)
         return {
             'base': str(db.base.resolve()),
-            'size': db.size,
             'capacity': db.capacity,
+            'count': db.count,
+            'size': db.index.index_file_size(),
         }
 
     def handle_clear_db(self, db_name: str = cfg.DB_NAME) -> bool:
@@ -332,8 +344,7 @@ class Server:
         bind: str = cfg.UNIX_SOCKET,
         log_level: str = 'info',
     ):
-        self._shutdown_requested = False
-        self._restart_requested = False
+        self._shutdown = threading.Event()
         self.base_dir = base_dir
         self.model_key = model_key
         self.bind = bind
@@ -385,14 +396,15 @@ class Server:
         except Exception as e:
             self.logger.error(f'Failed to remove PID file: {e}')
 
-    @staticmethod
-    def is_running(pid: int) -> bool:
+    def is_running(self) -> bool:
         """Check if process with given pid is running."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+        if pid := self._read_pid_file():
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+        return False
 
     def run(self):
         """Run the server with proper signal handling."""
@@ -401,11 +413,10 @@ class Server:
 
         try:
             # Check if already running
-            existing_pid = self._read_pid_file()
-            if not existing_pid or not self.is_running(existing_pid):
+            if not self.is_running():
                 self.logger.info('Starting iSearch Service...')
             else:
-                self.logger.error(f'Server already running with PID {existing_pid}')
+                self.logger.error('Server already running')
                 return
 
             # Register service and start daemon
@@ -430,28 +441,23 @@ class Server:
             self.logger.debug(f'Base dir  : {self.base_dir}')
             self.logger.debug(f'Model     : {self.model_key}')
 
-            self.daemon.requestLoop()
+            self.daemon.requestLoop(lambda: not self._shutdown.is_set())
         except ImportError as e:
             self.logger.error(f'Missing optional dependencies: {e}')
             self.logger.error("Run `pip install 'imgsearch[all]'` for a full install.")
         except Exception as e:
-            self.logger.error(f'Server failed to start: {e}')
+            self.logger.error(f'Server failed to run: {e}')
         finally:
             self.cleanup()
             self.logger.info('iSearch service stopped')
 
     def handle_signal(self, signum, _):
         """Handle various signals."""
-        if self._shutdown_requested:
-            return
-
         match signum:
             case signal.SIGTERM | signal.SIGINT:
                 name = signal.Signals(signum).name
                 self.logger.warning(f'Received {name}, shutting down now...')
-                self._shutdown_requested = True
-                if self.daemon:
-                    self.daemon.shutdown()
+                self._shutdown.set()
             case signal.SIGHUP:
                 self.logger.warning('Received SIGHUP, ignoring (restart not supported)')
 
@@ -462,14 +468,14 @@ class Server:
             print_err('iSearch service is not running')
             return False
 
-        if not self.is_running(pid):
-            print_err(f'Process {pid} is not running')
+        if not self.is_running():
+            print_err('iSearch service is not running')
             self._remove_pid_file()
             return False
 
         try:
             os.kill(pid, signal.SIGTERM)
-            print_err(f'Sent SIGTERM to process {pid}')
+            print_warn(f'Shutting down process {pid}')
             return True
         except OSError as e:
             print_err(f'Failed to send SIGTERM: {e}')
@@ -477,15 +483,6 @@ class Server:
 
     def cleanup(self):
         """Cleanup resources before exit."""
-        # Save databases
-        if isinstance(self.service, RPCService):
-            for name, db in self.service.databases.items():
-                try:
-                    db.save()
-                    self.logger.debug(f'Database "{name}" saved')
-                except Exception as e:
-                    self.logger.error(f'Failed to save db "{name}": {e}')
-
         # Shutdown daemon if running
         if self.daemon:
             try:
@@ -494,43 +491,25 @@ class Server:
             except Exception as e:
                 self.logger.error(f'Failed to shutdown daemon: {e}')
 
+        # Save databases
+        if isinstance(self.service, RPCService):
+            self.logger.info('Saving databases...')
+            for name, db in self.service.databases.items():
+                try:
+                    db.save()
+                    self.logger.debug(f'Database "{name}" saved')
+                except Exception as e:
+                    self.logger.error(f'Failed to save db "{name}": {e}')
+
         # Cleanup socket
         if isinstance(self.bind, str):
             uds_path = Path(self.bind)
             if uds_path.is_socket():
-                self.logger.debug(f'Cleaning up unix socket: {self.bind}')
                 uds_path.unlink()
+                self.logger.debug(f'Unix socket removed: {self.bind}')
 
         # Remove pid file
         self._remove_pid_file()
-
-    @classmethod
-    def status(cls):
-        """Check server status."""
-        pid_file = cfg.BASE_DIR / 'isearch.pid'
-        if not pid_file.exists():
-            print_err('iSearch service is not running')
-            return False
-
-        try:
-            pid = int(pid_file.read_text().strip())
-            if cls.is_running(pid):
-                print_inf('iSearch service is running', marked=True)
-                print_inf(f'* {bold("PID")}: {pid}')
-                try:
-                    memory_info = psutil.Process(pid).memory_info()
-                    memory_mb = memory_info.rss / 1024 / 1024
-                    print_inf(f'* {bold("MEM")}: {memory_mb:.1f} MB')
-                except Exception as e:
-                    print_err(f'* {bold("MEM")}: unknown ({e})')
-                return True
-            else:
-                print_err('PID file exists but process is not running')
-                pid_file.unlink(missing_ok=True)
-                return False
-        except Exception as e:
-            print_err(f'Error checking status: {e}')
-            return False
 
 
 def main():
