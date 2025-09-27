@@ -15,7 +15,7 @@ Wants=network.target
 [Service]
 User={username}
 Group={usergroup}
-WorkingDirectory="{base_dir}"
+WorkingDirectory={base_dir}
 Environment=PATH={py_bin}:/usr/local/bin:/usr/bin:/bin
 ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -L {log_level}
 Restart=on-failure
@@ -24,7 +24,7 @@ SyslogIdentifier=isearch
 OOMScoreAdjust=-500
 MemoryMax=2560M
 ProtectSystem=strict
-ReadWritePaths="{base_dir}"
+ReadWritePaths={base_dir}
 TemporaryFileSystem=/tmp:noexec
 
 [Install]
@@ -104,6 +104,10 @@ def get_env_variables(base_dir: str, model_key: str, bind: str, log_level: str, 
 
 def setup_systemd_service(env_vars: dict[str, str]):
     """Setup systemd service for Linux."""
+    # Escape spaces in paths
+    env_vars['base_dir'] = env_vars['base_dir'].replace(' ', '\\ ')
+    env_vars['py_bin'] = env_vars['py_bin'].replace(' ', '\\ ')
+
     # Create service config file
     config = SYSTEMD_SERVICE_TEMPLATE.format(**env_vars)
     with NamedTemporaryFile(mode='w', suffix='.service', delete=False) as tmp:

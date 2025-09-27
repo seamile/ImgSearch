@@ -63,6 +63,12 @@ class VectorDB:
         self.index, self.mapping = self.load_db(self.path, dim)
         self.wlock = RLock()
 
+    def __del__(self) -> None:
+        """Delete index and mapping files"""
+        del self.index
+        del self.mapping
+        del self
+
     def __len__(self) -> int:
         """Get number of items in mapping"""
         return len(self.mapping)

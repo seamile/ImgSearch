@@ -46,7 +46,7 @@ all = [
     "numpy>=1.24.0; sys_platform!='darwin' or platform_machine!='x86_64'",
     # TinyCLIP dependencies
     "ftfy>=6.3.1",
-    "huggingface-hub>=0.35.0",
+    "huggingface-hub>=0.35.1",
     "regex>=2025.9.18",
     "timm>=1.0.20",
     "tqdm>=4.67.1",
@@ -63,7 +63,7 @@ isearch = "imgsearch.client:main"
 [project.urls]
 homepage = "https://github.com/seamile/imgsearch"
 repository = "https://github.com/seamile/imgsearch"
-documentation = "https://github.com/seamile/ImgSearch/blob/main/README.md"
+documentation = "https://seamile.github.io/ImgSearch/"
 
 [build-system]
 requires = ["setuptools>=60.0.0", "wheel"]

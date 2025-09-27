@@ -6,6 +6,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Sequence
 from functools import cached_property
+from gc import collect
 from pathlib import Path
 from queue import Full, Queue
 from typing import Any, ClassVar
@@ -225,20 +226,20 @@ class RPCService:
         finally:
             self.search_semaphore.release()
 
-    def handle_list_dbs(self) -> list[str]:
+    def handle_list_dbs(self) -> dict[str, bool]:
         """
-        List all available database names.
+        List all available database names and whether they are loaded.
 
         Returns:
-            List of database names found in the base directory
+            Dictionary mapping database names to boolean indicating whether they are loaded
         """
         try:
-            db_list = VectorDB.db_list(self.base_dir)
-            self.logger.debug(f'List dbs: {db_list}')
-            return db_list
+            dbs = {name: name in RPCService.databases for name in VectorDB.db_list(self.base_dir)}
+            self.logger.debug(f'List dbs: {dbs}')
+            return dbs
         except Exception as e:
             self.logger.error(f'Failed to list databases: {e}')
-            return []
+            return {}
 
     def handle_get_db_info(self, db_name: str) -> dict | None:
         """
@@ -262,6 +263,20 @@ class RPCService:
             'count': db.count,
             'size': db.index.index_file_size(),
         }
+
+    def handle_unload_dbs(self, *names: str) -> int:
+        """Unload databases to free memory"""
+        names = names or tuple(RPCService.databases.keys())
+        count = 0
+        for name in names:
+            if name not in RPCService.databases:
+                continue
+            db = RPCService.databases.pop(name)
+            db.save()
+            count += 1
+            self.logger.debug(f'Unloaded db: {name}')
+        collect()
+        return count
 
     def handle_delete_images(self, keys: list[int | str], rebuild: bool, db_name: str):
         """Delete images from the specified database."""
@@ -384,10 +399,12 @@ class Server:
 
         return daemon
 
-    def _write_pid_file(self):
+    def _write_pid_file(self) -> int:
         """Write current process ID to pid file."""
         try:
-            self.pid_file.write_text(str(os.getpid()))
+            pid = os.getpid()
+            self.pid_file.write_text(str(pid))
+            return pid
         except Exception as e:
             self.logger.error(f'Failed to create PID file: {e}')
             raise
@@ -437,7 +454,7 @@ class Server:
             self.service.clip  # preload clip model  # noqa: B018
 
             # Create pid file
-            self._write_pid_file()
+            pid = self._write_pid_file()
 
             # Setup signal handlers
             signal.signal(signal.SIGTERM, self.handle_signal)
@@ -445,10 +462,9 @@ class Server:
             signal.signal(signal.SIGINT, self.handle_signal)
 
             # Log service info
-            self.logger.info('iSearch service started')
+            self.logger.info(f'iSearch service started ({pid=})')
             self.logger.debug(f'Listening : {self.bind}')
             self.logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
-            self.logger.debug(f'Process ID: {os.getpid()}')
             self.logger.debug(f'Base dir  : {self.base_dir}')
             self.logger.debug(f'Model     : {self.model_key}')
 

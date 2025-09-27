@@ -144,13 +144,21 @@ class Client:
             ut.print_err(f'Failed to search: {e} ({e.__class__.__name__})')
             return None
 
-    def list_dbs(self) -> list[str]:
+    def list_dbs(self) -> dict[str, bool]:
         """Handle database list request."""
         try:
             return self.service.handle_list_dbs()  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
-            return []
+            return {}
+
+    def unload_dbs(self, *names: str) -> int:
+        """Handle database unload request."""
+        try:
+            return self.service.handle_unload_dbs(*names)  # type: ignore
+        except Exception as e:
+            ut.print_err(f'{e.__class__.__name__}: {e}')
+            return 0
 
     def get_db_info(self) -> dict | None:
         """Handle database info request."""
@@ -360,9 +368,10 @@ def create_parser() -> ArgumentParser:
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
     db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
     db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
-    db_group.add_argument('-d', '--delete', nargs='+', metavar='LABEL', help='Delete images by label')
-    db_group.add_argument('-c', '--clear', action='store_true', help='Clear the entire database')
-    db_group.add_argument('-D', '--drop', action='store_true', help='Drop the specified database')
+    db_group.add_argument('-u', '--unload', action='store_true', help='Unload all databases from memory')
+    db_group.add_argument('--delete', nargs='+', metavar='LABEL', help='Delete images by label')
+    db_group.add_argument('--clear', action='store_true', help='Clear the entire database')
+    db_group.add_argument('--drop', action='store_true', help='Drop the specified database')
 
     # Compare images subcommand
     cmd_cmp = subcmd.add_parser('cmp', parents=[arg_bind], help='Compare similarity of two images')
@@ -406,8 +415,11 @@ def main() -> None:  # noqa: C901
         if args.list:
             if databases := client.list_dbs():
                 ut.print_inf('Databases:', marked=True)
-                for db_name in databases:
-                    ut.print_inf(f' - {db_name}')
+                for db_name, loaded in databases.items():
+                    if loaded:
+                        ut.print_inf(f' - {ut.bold(db_name)} {ut.colorize("(loaded)", "gray")}')
+                    else:
+                        ut.print_inf(f' - {db_name}')
             else:
                 ut.print_warn('No databases found.')
 
@@ -422,6 +434,12 @@ def main() -> None:  # noqa: C901
                 ut.print_err('Database name is required.')
             else:
                 ut.print_err(f"Not found DB: '{args.db_name}'.")
+
+        elif args.unload:
+            if count := client.unload_dbs():
+                ut.print_inf(f'Unloaded {count} databases.')
+            else:
+                ut.print_inf('Not loaded any databases.')
 
         elif args.delete:
             if args.db_name is None:
