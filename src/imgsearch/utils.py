@@ -85,7 +85,7 @@ def is_image(path: Path, ignore_hidden=True) -> bool:
 
 def img2bytes(img: Image.Image, resize: int = 0) -> bytes:
     """Convert image to bytes"""
-    if resize > 0:
+    if resize > 0 and max(img.size) > resize:
         img.thumbnail((resize, resize))
     buffer = BytesIO()
     img.convert('RGB').save(buffer, format='webp', quality=97)

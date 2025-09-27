@@ -126,20 +126,26 @@ class Client:
 
         return n_images
 
-    def search(self, target: str, num: int = 10, similarity: int = 0):
+    def search(self, target: str | Image.Image, num: int = 10, similarity: int = 0) -> list[tuple[str, float]] | None:
         """Handle search operations."""
-        query_path = Path(target)
-        try:
-            results: list | None
+        query: str | bytes
+        if isinstance(target, str):
+            query_path = Path(target)
             if query_path.is_file() and ut.is_image(query_path):
-                # Image search
+                # search by image path
                 img = Image.open(query_path)
-                img_bytes = ut.img2bytes(img, 384)
-                results = self.service.handle_search(img_bytes, k=num, similarity=similarity, db_name=self.db_name)
+                query = ut.img2bytes(img, 384)
             else:
-                # Text search
-                results = self.service.handle_search(str(target), k=num, similarity=similarity, db_name=self.db_name)
-            return results
+                # search by text
+                query = target
+        elif isinstance(target, Image.Image):
+            # search by image object
+            query = ut.img2bytes(target, 384)
+        else:
+            raise TypeError(f'Invalid query type: {type(target)}')
+
+        try:
+            return self.service.handle_search(query, k=num, similarity=similarity, db_name=self.db_name)
         except Exception as e:
             ut.print_err(f'Failed to search: {e} ({e.__class__.__name__})')
             return None
