@@ -189,8 +189,8 @@ isearch db -l
 Output:
 ```
 Available databases:
-* default
-* my_gallery
+* default (loaded)
+* gallery
 * test_db
 ```
 
@@ -508,8 +508,8 @@ isearch db -l
 输出：
 ```
 Available databases:
-* default
-* my_gallery
+* default (loaded)
+* gallery
 * test_db
 ```
 
