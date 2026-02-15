@@ -129,7 +129,7 @@ class RPCService:
                     self._process_images(batch_images, batch_labels, db_name)
                     batches[db_name] = ([], [])
 
-            except Exception:
+            except Exception:  # noqa: PERF203
                 # Process remaining images in all batches
                 for db_name, (batch_images, batch_labels) in batches.items():
                     if batch_images:
@@ -221,7 +221,7 @@ class RPCService:
             db = self._get_db(db_name)
             return db.search(feature, k, similarity)
         except Exception as e:
-            self.logger.error(f'Text search failed: {e}')
+            self.logger.error(f'Search failed: {e}')
             return []
         finally:
             self.search_semaphore.release()
@@ -525,7 +525,7 @@ class Server:
                 try:
                     db.save()
                     self.logger.debug(f'Database "{name}" saved')
-                except Exception as e:
+                except Exception as e:  # noqa: PERF203
                     self.logger.error(f'Failed to save db "{name}": {e}')
 
         # Cleanup socket

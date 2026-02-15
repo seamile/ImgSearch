@@ -75,7 +75,7 @@ class Client:
                     ut.print_inf(f'Sending {len(send_dict)} images to the server...')
                     self.service.handle_add_images(send_dict, self.db_name)
                     send_dict = {}
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203
                 ut.print_err(f'Failed to process image {path}: {e}')
 
         if send_dict:
@@ -316,9 +316,9 @@ def create_parser() -> ArgumentParser:
         formatter_class=DefaultFmt,
     )
     cmd_search.add_argument('-t', dest='sim_thr', type=int, default=0, help='Similarity threshold, 0 - 100')
-    cmd_search.add_argument('-n', dest='num', type=int, default=10, help='Number of search results')
+    cmd_search.add_argument('-n', dest='num', type=int, default=3, help='Number of search results')
     cmd_search.add_argument('-o', dest='open_res', action='store_true', help='Open the searched images')
-    cmd_search.add_argument('target', nargs='?', help='Search target (image path or keyword)')
+    cmd_search.add_argument('target', help='Search target (image path or keyword)')
 
     # Service management subcommand
     cmd_service = subcmd.add_parser(
@@ -439,7 +439,7 @@ def main() -> None:  # noqa: C901
             elif args.db_name is None:
                 ut.print_err('Database name is required.')
             else:
-                ut.print_err(f"Not found DB: '{args.db_name}'.")
+                ut.print_err(f"Not found DB: '{args.db_name}'")
 
         elif args.unload:
             if count := client.unload_dbs():
@@ -492,19 +492,21 @@ def main() -> None:  # noqa: C901
             ut.print_err('Error: sim_thr must be between 0 and 100')
             sys.exit(1)
 
-        ut.print_inf(f'Searching {args.target}...')
+        ut.print_msg(f'Searching {args.target}...')
         results = client.search(args.target, args.num, args.sim_thr)
         if results:
-            ut.print_inf(f'Found {len(results)} similar images (similarity ≥ {args.sim_thr}%):')
-            for i, (path, similarity) in enumerate(results, 1):
-                ut.print_inf(f'{i:2d}. {path}\t{similarity}%')
+            ut.print_inf(f'Found {len(results)} images similar to {args.target} (similarity ≥ {args.sim_thr}%):', True)
+            for path, similarity in results:
+                print(f'{path}\t{similarity}%')
 
             if args.open_res:
                 ut.open_images([path for path, _ in results])
         elif results is None:
-            ut.print_inf('Search queue is full, please try again later.')
+            ut.print_warn('Search queue is full, please try again later.')
+            sys.exit(2)
         else:
-            ut.print_inf('No similar images found.')
+            ut.print_warn(f'No image similar to {args.target} was found.')
+            sys.exit(2)
 
     else:
         parser.print_help()

@@ -57,17 +57,11 @@ class VectorDB:
         self.name = db_name
         self.base = base_dir
         self.dim = dim
-        self.path = (base_dir / db_name).resolve()
+        self.path = (base_dir / db_name).absolute()
         self.idx_path = self.path / cfg.IDX_NAME  # HNSW index file
         self.map_path = self.path / cfg.MAP_NAME  # Label mapping file
         self.index, self.mapping = self.load_db(self.path, dim)
         self.wlock = RLock()
-
-    def __del__(self) -> None:
-        """Delete index and mapping files"""
-        del self.index
-        del self.mapping
-        del self
 
     def __len__(self) -> int:
         """Get number of items in mapping"""
