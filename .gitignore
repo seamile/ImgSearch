@@ -1,28 +1,26 @@
-# Python-generated files
+# Python stuff
+*.egg-info
+*.py[ocd]
+.python-version
+.ruff_cache/
+.venv
 __pycache__/
-*.py[oc]
+__pypackages__/
 build/
 dist/
 wheels/
-*.egg-info
 
-# Virtual environments
-.venv
-
-# uv
-uv.lock
-.python-version
-
-# mypy
-.mypy_cache/
-
-# pytest
+# Testing
 .coverage
+.pytest_cache/
 
 # Dev env
-.DS_Store
-.vscode/
 *.code-workspace
+*.log
+.DS_Store
+.codegraph/
+.kilocode/
+.serena/
+.vscode/
+logs/
 misc/
-.iflow/
-IFLOW.md
