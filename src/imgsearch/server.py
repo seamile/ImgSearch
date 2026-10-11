@@ -36,6 +36,7 @@ class RPCService:
     """
 
     databases: ClassVar[dict[str, VectorDB]] = {}
+    database_lock: ClassVar[threading.RLock] = threading.RLock()
 
     def __init__(
         self,
@@ -73,11 +74,12 @@ class RPCService:
 
     def _get_db(self, db_name: str):
         """Get database instance"""
-        if db_name not in self.databases:
-            self.logger.debug(f'Loading database: {db_name}')
-            dim = cfg.MODELS[self.model_key][2]
-            self.databases[db_name] = VectorDB(db_name, self.base_dir, dim)
-        return self.databases[db_name]
+        with self.database_lock:
+            if db_name not in self.databases:
+                self.logger.debug(f'Loading database: {db_name}')
+                dim = cfg.MODELS[self.model_key][2]
+                self.databases[db_name] = VectorDB(db_name, self.base_dir, dim)
+            return self.databases[db_name]
 
     def handle_status(self) -> dict:
         """Get service status, including physical memory usage (bytes)"""
@@ -92,8 +94,9 @@ class RPCService:
 
     def handle_check_exist_labels(self, labels: Sequence[str], db_name: str) -> list[bool]:
         """Check if multiple labels exist in the database"""
-        db = self._get_db(db_name)
-        return db.has_labels(labels)
+        with self.database_lock:
+            db = self._get_db(db_name)
+            return db.has_labels(labels)
 
     def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
         """Process a batch of images asynchronously."""
@@ -102,8 +105,9 @@ class RPCService:
             # Embed images
             features = self.clip.embed_images(images)
             # Add features to database
-            db = self._get_db(db_name)
-            db.add_items(labels, features, overwrite=True)
+            with self.database_lock:
+                db = self._get_db(db_name)
+                db.add_items(labels, features, overwrite=True)
 
             self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.count=})')
 
@@ -129,7 +133,7 @@ class RPCService:
                     self._process_images(batch_images, batch_labels, db_name)
                     batches[db_name] = ([], [])
 
-            except Exception:  # noqa: PERF203
+            except Exception:
                 # Process remaining images in all batches
                 for db_name, (batch_images, batch_labels) in batches.items():
                     if batch_images:
@@ -218,8 +222,9 @@ class RPCService:
                 self.logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
                 return []
 
-            db = self._get_db(db_name)
-            return db.search(feature, k, similarity)
+            with self.database_lock:
+                db = self._get_db(db_name)
+                return db.search(feature, k, similarity)
         except Exception as e:
             self.logger.error(f'Search failed: {e}')
             return []
@@ -249,41 +254,42 @@ class RPCService:
             db_name: Name of the database to get info for
 
         Returns:
-            Dictionary containing database statistics (base_dir, size, capacity)
+            Dictionary containing database statistics (base_dir, size, count)
             Returns None if database not found
         """
-        if db_name not in VectorDB.db_list(self.base_dir):
-            return None
+        with self.database_lock:
+            if db_name not in VectorDB.db_list(self.base_dir):
+                return None
 
-        self.logger.debug(f'Get db info: {db_name}')
-        db = self._get_db(db_name)
-        return {
-            'base': str(db.base.resolve()),
-            'capacity': db.capacity,
-            'count': db.count,
-            'size': db.index.index_file_size(),
-        }
+            self.logger.debug(f'Get db info: {db_name}')
+            db = self._get_db(db_name)
+            return {
+                'base': str(db.base.resolve()),
+                'count': db.count,
+                'size': db.size,
+            }
 
     def handle_unload_dbs(self, *names: str) -> int:
         """Unload databases to free memory"""
-        names = names or tuple(RPCService.databases.keys())
-        count = 0
-        for name in names:
-            if name not in RPCService.databases:
-                continue
-            db = RPCService.databases.pop(name)
-            db.save()
-            count += 1
-            self.logger.debug(f'Unloaded db: {name}')
+        with self.database_lock:
+            names = names or tuple(RPCService.databases.keys())
+            count = 0
+            for name in names:
+                if name not in RPCService.databases:
+                    continue
+                RPCService.databases.pop(name)
+                count += 1
+                self.logger.debug(f'Unloaded db: {name}')
         collect()
         return count
 
-    def handle_delete_images(self, keys: list[int | str], rebuild: bool, db_name: str):
+    def handle_delete_images(self, keys: list[int | str], db_name: str):
         """Delete images from the specified database."""
-        self.logger.warning(f'[Delete] Delete {len(keys)} images from {db_name} (rebuild={rebuild})')
+        self.logger.warning(f'[Delete] Delete {len(keys)} images from {db_name}')
         try:
-            db = self._get_db(db_name)
-            db.delete(*keys, rebuild=rebuild)
+            with self.database_lock:
+                db = self._get_db(db_name)
+                db.delete(*keys)
             return True
         except Exception as e:
             self.logger.error(f'Failed to delete images: {e}')
@@ -301,8 +307,9 @@ class RPCService:
         """
         self.logger.warning(f'[Clear] Clear database: {db_name}')
         try:
-            db = self._get_db(db_name)
-            db.clear()
+            with self.database_lock:
+                db = self._get_db(db_name)
+                db.clear()
             self.logger.debug(f'Database {db_name} cleared')
             return True
         except Exception as e:
@@ -321,9 +328,10 @@ class RPCService:
         """
         self.logger.warning(f'[Drop] Drop database: {db_name}')
         try:
-            if db_name in self.databases:
-                del self.databases[db_name]
-            return VectorDB.drop(db_name, self.base_dir)
+            with self.database_lock:
+                if db_name in self.databases:
+                    del self.databases[db_name]
+                return VectorDB.drop(db_name, self.base_dir)
         except Exception as e:
             self.logger.error(f'Failed to drop database: {e}')
             return False
@@ -451,7 +459,7 @@ class Server:
             self.logger.info('Preloading CLIP model...')
             self.daemon = self.create_daemon()
             self.daemon.register(self.service, objectId=cfg.SERVICE_NAME)
-            self.service.clip  # preload clip model  # noqa: B018
+            self.service.clip  # preload clip model  # ruff: ignore[useless-expression]
 
             # Create pid file
             pid = self._write_pid_file()
@@ -518,15 +526,10 @@ class Server:
             except Exception as e:
                 self.logger.error(f'Failed to shutdown daemon: {e}')
 
-        # Save databases
+        # LanceDB commits writes immediately; release cached database handles.
         if isinstance(self.service, RPCService):
-            self.logger.info('Saving databases...')
-            for name, db in self.service.databases.items():
-                try:
-                    db.save()
-                    self.logger.debug(f'Database "{name}" saved')
-                except Exception as e:  # noqa: PERF203
-                    self.logger.error(f'Failed to save db "{name}": {e}')
+            with self.service.database_lock:
+                self.service.databases.clear()
 
         # Cleanup socket
         if isinstance(self.bind, str):

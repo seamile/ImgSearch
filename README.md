@@ -2,7 +2,7 @@
 
 [🇬🇧 English](#imgsearch---lightweight-reverse-image-search-engine) ⇌ [🇨🇳 中文](#imgsearch-反向图片搜索引擎)
 
-ImgSearch is a lightweight reverse image search engine that supports search by image or text. Built on [TinyCLIP](https://github.com/wkcn/TinyCLIP) and [HNSWlib](https://github.com/nmslib/hnswlib), it's fast and resource-efficient, running on devices with just 2GB of RAM. Use it standalone or integrate it as a Python library.
+ImgSearch is a reverse image search engine that supports search by image or text. Built on [TinyCLIP](https://github.com/wkcn/TinyCLIP) and [LanceDB](https://lancedb.com/), it stores vectors locally without a separate database server. Use it standalone or integrate it as a Python library.
 
 ## Features
 
@@ -135,7 +135,7 @@ isearch add -l name ./images/
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
-The `add` command extracts 512-dimensional feature vectors from images using TinyCLIP and stores them in an HNSW index.
+The `add` command extracts feature vectors using TinyCLIP (512 or 1024 dimensions, depending on the model) and stores them in a local LanceDB table. Small databases use exact cosine search; an IVF-HNSW index is created at 10,000 items. Storage and indices are optimized after every 20 data modifications.
 
 ### 3. Search Images
 
@@ -204,7 +204,6 @@ Example output:
 ```
 Database "my_db"
  - Base: /home/seamile/.isearch
- - Capacity: 150000
  - Count: 141610
  - Size: 313.9 MB
 ```
@@ -322,7 +321,7 @@ isearch service start -m NEW_MODEL_KEY
 
 [🇨🇳 中文](#imgsearch-反向图片搜索引擎) ⇌ [🇬🇧 English](#imgsearch---lightweight-reverse-image-search-engine)
 
-ImgSearch 是一款轻量级的反向图片搜索引擎，支持以图搜图和文字描述搜图。基于 [TinyCLIP](https://github.com/wkcn/TinyCLIP) 和 [HNSWlib](https://github.com/nmslib/hnswlib) 构建，速度快、资源占用低，可在 2GB 内存设备上运行。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
+ImgSearch 是一款反向图片搜索引擎，支持以图搜图和文字描述搜图。基于 [TinyCLIP](https://github.com/wkcn/TinyCLIP) 和 [LanceDB](https://lancedb.com/) 构建，向量在本地存储，无需单独部署数据库服务。可作为独立搜索引擎使用，或作为 Python 库集成到其他系统。
 
 ## 特性
 
@@ -453,7 +452,7 @@ isearch add -l name ./images/
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
-`add` 命令会通过 TinyCLIP 提取图片的特征（512 维向量），并存储在 HNSWlib 索引中。
+`add` 命令通过 TinyCLIP 提取图片特征（按模型为 512 或 1024 维），并存储在本地 LanceDB 表中。小库使用精确 cosine 搜索，达到 10,000 条时自动创建 IVF-HNSW 索引，每 20 次数据修改执行存储和索引优化。
 
 ### 3. 搜索图片
 
@@ -523,7 +522,6 @@ isearch db -i my_db
 ```
 Database "my_db"
  - Base: /home/seamile/.isearch
- - Capacity: 150000
  - Count: 141610
  - Size: 313.9 MB
 ```
@@ -633,4 +631,28 @@ ImgSearch 支持多种 TinyCLIP 模型，默认的 `ViT-45LY` 平衡了速度、
 # 重启 isearch 服务
 isearch service stop
 isearch service start -m NEW_MODEL_KEY
+```
+
+## LanceDB storage / 存储迁移
+
+LanceDB 0.40.0 commits each write immediately. Integer IDs remain stable across updates and are not reused after deletion. Database info reports row count and disk bytes (including retained versions); there is no fixed capacity or `--rebuild` option. Deletions disappear from searches immediately, while old versions may keep files until normal maintenance cleans them up. Use one writing service per database and keep the same TinyCLIP model when querying an existing database.
+
+旧 HNSW 库不会自动修改或被当成空库打开。先停止服务，备份旧库，然后迁移到一个不存在的新目录；向量和原 ID/label 会保留，无需重新跑模型。只对可信的本地备份运行迁移工具（旧 mapping 使用 pickle）。维度和模型必须与原库一致。
+
+```shell
+# Install the optional legacy reader dependencies if needed.
+# 如有需要，安装读取旧格式所需的可选依赖。
+pip install 'imgsearch[migration]'
+
+# Stop the service, then export into a NEW directory.
+isearch stop
+python -m imgsearch.migrate ~/.isearch/default ~/.isearch/default_lance --dim 512
+```
+
+Check counts and searches before switching clients to `default_lance`. The original directory is preserved for rollback; new LanceDB writes are not copied back to it. 已迁移目录包含 `images.lance`；请核对条目数和搜索结果，再切换数据库名。LanceDB 写入立即持久化，删除立即从查询结果中消失，但历史版本的文件需要等后续维护回收。`--rebuild`、固定容量和手动保存已移除；同一数据库只运行一个写入服务。
+
+For this development environment, preserve the locally compiled packages already installed from `~/src/package/simple`:
+
+```shell
+uv sync --all-extras --no-install-package torch --no-install-package torchvision --no-install-package lancedb --inexact
 ```

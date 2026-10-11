@@ -300,20 +300,23 @@ wheels = [
 name = "imgsearch"
 source = { editable = "." }
 dependencies = [
-    { name = "bidict" },
-    { name = "hnswlib" },
     { name = "lancedb" },
     { name = "msgpack" },
+    { name = "numpy" },
     { name = "pillow" },
     { name = "psutil" },
+    { name = "pyarrow" },
     { name = "pyro5" },
 ]
 
 [package.optional-dependencies]
+migration = [
+    { name = "bidict" },
+    { name = "hnswlib" },
+]
 server = [
     { name = "ftfy" },
     { name = "huggingface-hub" },
-    { name = "numpy" },
     { name = "regex" },
     { name = "timm" },
     { name = "torch" },
@@ -329,15 +332,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bidict", specifier = ">=0.24.1" },
+    { name = "bidict", marker = "extra == 'migration'", specifier = ">=0.24.1" },
     { name = "ftfy", marker = "extra == 'server'", specifier = ">=6.3.1" },
-    { name = "hnswlib", specifier = ">=0.8.0" },
+    { name = "hnswlib", marker = "extra == 'migration'", specifier = ">=0.8.0" },
     { name = "huggingface-hub", marker = "extra == 'server'", specifier = ">=2.2.0" },
-    { name = "lancedb", specifier = ">=0.40.0" },
+    { name = "lancedb", specifier = "==0.40.0" },
     { name = "msgpack", specifier = ">=1.2.3" },
-    { name = "numpy", marker = "extra == 'server'", specifier = ">=2.5.3" },
+    { name = "numpy", specifier = ">=2.5.3" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "psutil", specifier = ">=7.2.2" },
+    { name = "pyarrow", specifier = ">=26.0.0" },
     { name = "pyro5", specifier = ">=5.17" },
     { name = "regex", marker = "extra == 'server'", specifier = ">=2026.9.29" },
     { name = "timm", marker = "extra == 'server'", specifier = ">=1.0.30" },
@@ -345,7 +349,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'server'", specifier = ">=0.29.1" },
     { name = "tqdm", marker = "extra == 'server'", specifier = ">=4.70.1" },
 ]
-provides-extras = ["server"]
+provides-extras = ["migration", "server"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -3,12 +3,10 @@ import os
 import platform
 import subprocess
 import sys
-from collections.abc import Hashable, Sequence
+from collections.abc import Sequence
 from io import BytesIO
-from itertools import islice
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import TypeVar
 
 from PIL import Image
 
@@ -17,7 +15,6 @@ from imgsearch.config import BASE_DIR
 EXTENSIONS = Image.registered_extensions().keys()
 
 Feature = list[float]
-HashableT = TypeVar('HashableT', bound=Hashable)
 
 
 def colorize(text: str, color: str = '', bold=False) -> str:
@@ -120,19 +117,6 @@ def find_all_images(paths: str | Path | Sequence[str | Path], recursively=True, 
             print_err(f'{path} is not a file or directory')
 
 
-def ibatch(iterable, batch_size):
-    """Batch iterator"""
-    if batch_size <= 0:
-        raise ValueError('Batch size must be greater than 0')
-
-    if not iterable:
-        yield []
-
-    iter_data = iter(iterable)
-    while batch := list(islice(iter_data, batch_size)):
-        yield batch
-
-
 class ColorFormatter(logging.Formatter):
     """Color formatter for logging"""
 
@@ -197,29 +181,3 @@ def open_images(paths: Sequence[str | Path]):
             subprocess.run(['xdg-open', *paths])
     except Exception as e:
         print_err(f'Failed to open images: {e}')
-
-
-def multi_remove(lst: list[HashableT], values: list[HashableT]) -> list[int]:
-    """Remove multiple values from a list"""
-    value_set = set(values)
-    removed_indices, kept = [], []
-    for i, v in enumerate(lst):
-        if v in value_set:
-            removed_indices.append(i)
-        else:
-            kept.append(v)
-    lst[:] = kept  # In-place modification
-    return removed_indices
-
-
-def multi_pop(lst: list, indices: list[int]):
-    """Pop multiple indices from a list"""
-    idx_set = set(indices)  # O(1)
-    removed, kept = [], []
-    for i, v in enumerate(lst):
-        if i in idx_set:
-            removed.append(v)
-        else:
-            kept.append(v)
-    lst[:] = kept  # In-place modification
-    return removed

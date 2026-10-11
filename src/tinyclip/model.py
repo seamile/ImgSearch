@@ -1337,7 +1337,7 @@ def load_pruned_model(model, pruned_state_dict, strict=True):  # noqa: C901
             dst.copy_(src)
         else:
             slices = [slice(0, d) for d in dims]
-            dst[slices].copy_(src)
+            dst[tuple(slices)].copy_(src)
 
     for _ in range(2):
         pruned_state_dict = {k.replace('module.', ''): v for k, v in pruned_state_dict.items()}

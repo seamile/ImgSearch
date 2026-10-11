@@ -75,7 +75,7 @@ class Client:
                     ut.print_inf(f'Sending {len(send_dict)} images to the server...')
                     self.service.handle_add_images(send_dict, self.db_name)
                     send_dict = {}
-            except Exception as e:  # noqa: PERF203
+            except Exception as e:
                 ut.print_err(f'Failed to process image {path}: {e}')
 
         if send_dict:
@@ -174,10 +174,10 @@ class Client:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return None
 
-    def delete_images(self, labels: list[str], rebuild: bool = False) -> bool:
+    def delete_images(self, labels: list[str]) -> bool:
         """Handle image deletion request."""
         try:
-            return self.service.handle_delete_images(labels, rebuild, self.db_name)  # type: ignore
+            return self.service.handle_delete_images(labels, self.db_name)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
@@ -213,7 +213,7 @@ class Client:
             return 0
 
 
-def handle_service_command(  # noqa: C901
+def handle_service_command(  # ruff: ignore[complex-structure]
     service_cmd: str,
     base_dir: Path = cfg.BASE_DIR,
     model_key: str = cfg.DEFAULT_MODEL_KEY,
@@ -369,7 +369,6 @@ def create_parser() -> ArgumentParser:
 
     # Database management subcommand
     cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Database management operations')
-    cmd_db.add_argument('-r', '--rebuild', action='store_true', help='Rebuild index after deletion')
     cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Database name')
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
     db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
@@ -390,7 +389,7 @@ def create_parser() -> ArgumentParser:
     return parser
 
 
-def main() -> None:  # noqa: C901
+def main() -> None:  # ruff: ignore[complex-structure]
     """Main function for command line interface"""
     parser = create_parser()
     shortcut_search(parser)
@@ -456,7 +455,7 @@ def main() -> None:  # noqa: C901
                 f'Are you sure to delete {len(args.delete)} images from DB "{args.db_name}"? [y/N]: ', 'yellow', True
             )
             if input(notice).lower() == 'y':
-                if client.delete_images(args.delete, args.rebuild):
+                if client.delete_images(args.delete):
                     ut.print_inf(f'Successfully deleted {len(args.delete)} images from DB "{ut.bold(args.db_name)}".')
                 else:
                     ut.print_err(f'Failed to delete images from DB "{args.db_name}".')

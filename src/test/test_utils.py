@@ -18,7 +18,6 @@ from imgsearch.utils import (
     colorize,
     find_all_images,
     get_logger,
-    ibatch,
     img2bytes,
     is_image,
     open_images,
@@ -280,17 +279,6 @@ class TestUtils(unittest.TestCase):
         results_include = list(find_all_images(self.test_dir, ignore_hidden=False))
         self.assertIn(hidden_img, results_include)
 
-    def test_ibatch_basic(self):
-        """Test ibatch basic functionality"""
-        items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        batches = list(ibatch(items, 3))
-
-        self.assertEqual(len(batches), 4)
-        self.assertEqual(batches[0], [1, 2, 3])
-        self.assertEqual(batches[1], [4, 5, 6])
-        self.assertEqual(batches[2], [7, 8, 9])
-        self.assertEqual(batches[3], [10])
-
     def test_colorize_function(self):
         """Test colorize function with different colors"""
         test_text = 'test message'
@@ -317,28 +305,6 @@ class TestUtils(unittest.TestCase):
         result = bold(test_text)
         self.assertIn('\x1b[1m', result)
         self.assertIn(test_text, result)
-
-    def test_ibatch_exact_multiple(self):
-        """Test ibatch with exact multiple batch size"""
-        items = [1, 2, 3, 4, 5, 6]
-        batches = list(ibatch(items, 3))
-
-        self.assertEqual(len(batches), 2)
-        self.assertEqual(batches[0], [1, 2, 3])
-        self.assertEqual(batches[1], [4, 5, 6])
-
-    def test_ibatch_empty(self):
-        """Test ibatch with empty list"""
-        batches = list(ibatch([], 3))
-
-        self.assertEqual(len(batches), 0)
-
-    def test_ibatch_single_item(self):
-        """Test ibatch with single item"""
-        batches = list(ibatch([42], 5))
-
-        self.assertEqual(len(batches), 1)
-        self.assertEqual(batches[0], [42])
 
     def test_color_formatter(self):
         """Test ColorFormatter functionality"""
@@ -379,12 +345,13 @@ class TestUtils(unittest.TestCase):
 
     def test_get_logger_non_tty(self):
         """Test get_logger in non-TTY environment"""
-        with patch('sys.stderr.isatty', return_value=False), patch('pathlib.Path.mkdir'):
-            logger = get_logger('test_non_tty')
+        with tempfile.TemporaryDirectory() as directory, patch('sys.stderr.isatty', return_value=False):
+            logger = get_logger('test_non_tty', log_dir=Path(directory))
 
             self.assertEqual(logger.name, 'test_non_tty')
             self.assertEqual(logger.level, 20)  # INFO level
             self.assertEqual(len(logger.handlers), 1)
+            logger.handlers[0].close()
 
     def test_get_logger_custom_level(self):
         """Test get_logger with custom log level"""

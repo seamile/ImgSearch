@@ -41,10 +41,8 @@ your hardware, accuracy needs, and inference speed requirements. Official benchm
   GPU resources where recall is critical.
 
 Database Structure:
-- Each database is a directory under BASE_DIR containing:
-  - index.db: HNSW vector index (binary).
-  - mapping.db: Label-ID bidirectional mapping (pickled dict).
-- Default capacity 10k items; auto-resizes in chunks of CAPACITY.
+- Each database is a directory under BASE_DIR containing an images.lance table.
+- Small databases use exact cosine search; larger ones use IVF-HNSW.
 """
 
 from pathlib import Path
@@ -75,9 +73,8 @@ BATCH_SIZE = 100  # Images per batch for processing
 # Database configuration
 BASE_DIR = Path.home() / '.isearch'  # User home directory for DBs (~/.isearch)
 DB_NAME = 'default'  # Default database name
-IDX_NAME = 'index.db'  # HNSW vector index file
-MAP_NAME = 'mapping.db'  # Label-ID bidirectional mapping file (pickled)
-CAPACITY = 10000  # Initial index capacity; auto-resizes in increments of this value
+TABLE_NAME = 'images'
+INDEX_MIN_ROWS = 10000  # Build the cosine IVF-HNSW index above this size.
 
 # Service and networking
 SERVICE_NAME = 'isearch.service'  # Pyro5 object ID for service lookup

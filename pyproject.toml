@@ -1,13 +1,13 @@
 [project]
 name = "imgsearch"
 dynamic = ["version"]
-description = "ImgSearch is a lightweight reverse image search engine built on TinyCLIP and HNSWlib."
+description = "ImgSearch is a reverse image search engine built on TinyCLIP and LanceDB."
 keywords = [
     "image-search",
     "search-by-image",
     "reverse-image-search",
     "image-recognition",
-    "hnsw",
+    "lancedb",
     "clip",
     "open-clip",
     "tiny-clip"
@@ -28,20 +28,20 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "bidict>=0.24.1",
-    "hnswlib>=0.8.0",
-    "lancedb>=0.40.0",
+    "lancedb==0.40.0",
+    "numpy>=2.5.3",
+    "pyarrow>=26.0.0",
     "msgpack>=1.2.3",
     "pillow>=12.3.0",
     "psutil>=7.2.2",
     "pyro5>=5.17",
 ]
 [project.optional-dependencies]
+migration = ["bidict>=0.24.1", "hnswlib>=0.8.0"]
 server = [
     # PyTorch
     "torch>=2.14.1",
     "torchvision>=0.29.1",
-    "numpy>=2.5.3",
     # TinyCLIP dependencies
     "ftfy>=6.3.1",
     "huggingface-hub>=2.2.0",
