@@ -272,7 +272,7 @@ class TestClipFeatures(unittest.TestCase):
 
         result = clip.embed_text('test')
 
-        self.assertIsInstance(result, list)
+        self.assertIsInstance(result, np.ndarray)
         self.assertAlmostEqual(np.linalg.norm(np.array(result)), 1.0, places=5)  # type: ignore
         clip.tokenizer.assert_called_once_with(['test'])
         clip.model.encode_text.assert_called_once()
@@ -388,3 +388,18 @@ class TestClipErrors(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_real_embed_images_returns_float32_arrays():
+    from concurrent.futures import ThreadPoolExecutor
+    clip = Clip.__new__(Clip)
+    clip.device = torch.device('cpu')
+    clip.processor = lambda image: torch.ones(3, 2, 2)
+    clip.model = Mock()
+    clip.model.encode_image.return_value = torch.tensor([[3., 4., 0.], [0., 0., 2.]])
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        clip.executor = executor
+        result = clip.embed_images([Image.new('L', (2, 2)), Image.new('RGB', (2, 2))])
+    assert all(isinstance(vector, np.ndarray) and vector.dtype == np.float32 for vector in result)
+    np.testing.assert_allclose(result, [[.6, .8, 0], [0, 0, 1]])
+    assert clip.embed_images([]) == []

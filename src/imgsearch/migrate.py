@@ -1,73 +1,108 @@
-"""Export a trusted local HNSW database into a separate LanceDB directory."""
+"""Migrate a trusted HNSW or legacy LanceDB directory to a named image table."""
 
 import argparse
 from pathlib import Path
 from pickle import Unpickler
 from tempfile import TemporaryDirectory
 
+import lancedb
+
 from imgsearch.storage import VectorDB
 
 
 class _MappingUnpickler(Unpickler):
     def find_class(self, module, name):
-        # Older bidict pickles pass (class, items, inverted) to a now-changed constructor.
+        # Historical bidict reducer used a different constructor signature.
+        """Resolve pickle classes while adapting the historical bidict reconstruction helper."""
         if module == 'bidict._base' and name == 'BidictBase._from_other':
             return lambda cls, items, inverted: {v: k for k, v in items.items()} if inverted else dict(items)
         return super().find_class(module, name)
 
 
-def migrate(source: Path, destination: Path, dim: int = 512) -> int:
-    """Keep active IDs/labels and vectors; leave the source intact on any failure."""
+def _legacy_rows(source: Path, dim: int):
+    """Read legacy LanceDB or HNSW data as a vector dimension and iterable row batches."""
+    if (source / 'images.lance').is_dir():
+        table = lancedb.connect(source).open_table('images')
+        if table.schema.names != ['id', 'label', 'vector']:
+            raise ValueError('Expected legacy id/label/vector schema')
+        dim = table.schema.field('vector').type.list_size
+        # Stable legacy ID order determines the retained label for duplicates.
+        rows = table.to_arrow().sort_by([('id', 'ascending')]).to_batches(max_chunksize=5000)
+        return dim, (batch.to_pylist() for batch in rows)
+    if not (source / 'index.db').is_file() or not (source / 'mapping.db').is_file():
+        raise ValueError('Source must contain images.lance or index.db and mapping.db')
     from hnswlib import Index
 
-    source, destination = source.resolve(), destination.absolute()
-    if destination.exists() or source == destination or source in destination.parents:
-        raise ValueError('Destination must be a new directory outside the source database')
-    if not (source / 'index.db').is_file() or not (source / 'mapping.db').is_file():
-        raise ValueError('Source must contain index.db and mapping.db')
-    # Only run this tool on trusted local backups: pickle can execute code.
+    # Pickle is accepted only for trusted local backups.
     with (source / 'mapping.db').open('rb') as stream:
         mapping = dict(_MappingUnpickler(stream).load())
-    if any(not isinstance(fid, int) or fid <= 0 for fid in mapping):
+    if any(not isinstance(key, int) or key <= 0 for key in mapping):
         raise ValueError('Legacy IDs must be positive integers')
     if any(not isinstance(label, str) or not label for label in mapping.values()):
         raise ValueError('Legacy labels must be nonempty strings')
-    if len(set(mapping.values())) != len(mapping):
-        raise ValueError('Legacy labels must be unique')
     index = Index(space='cosine', dim=dim)
     index.load_index(str(source / 'index.db'))
-    stored_ids = index.get_ids_list()
-    if not set(mapping).issubset(stored_ids):
+    if not set(mapping).issubset(index.get_ids_list()):
         raise ValueError('Index and mapping files are not consistent')
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix='.isearch-migrate-', dir=destination.parent) as temporary:
-        db = VectorDB('database', Path(temporary), dim)
-        ids = list(mapping)
+    ids = sorted(mapping)
+
+    def batches():
+        """Yield legacy HNSW vectors and labels in batches ordered by ID."""
         for offset in range(0, len(ids), 5000):
-            batch = ids[offset : offset + 5000]
-            vectors = index.get_items(batch)
-            db.table.add([
-                {'id': fid, 'label': mapping[fid], 'vector': db._feature(vector.tolist())}
-                for fid, vector in zip(batch, vectors, strict=True)
-            ])
-        next_id = max(stored_ids, default=0) + 1
-        db.table.update_field_metadata({'path': 'id', 'metadata': {'next_id': str(next_id)}})
-        if db.count != len(mapping):
-            raise ValueError('Migrated row count does not match mapping')
-        db._maintain()
-        # The destination only appears after the complete export has succeeded.
-        db.path.rename(destination)
-    return len(mapping)
+            keys = ids[offset : offset + 5000]
+            vectors = index.get_items(keys)
+            yield [
+                {'id': key, 'label': mapping[key], 'vector': vector} for key, vector in zip(keys, vectors, strict=True)
+            ]
+
+    return dim, batches()
+
+
+def migrate(source: Path, destination: Path, dim: int = 512, *, table_name: str = 'default') -> int:
+    """Publish a validated new table; never modify the source or replace a table."""
+    source, destination = Path(source).resolve(), Path(destination).resolve()
+    target = VectorDB.table_path(table_name, destination)
+    if target.exists() or source == destination or source in destination.parents:
+        raise ValueError('Destination must be outside the source with a new table name')
+    dim, batches = _legacy_rows(source, dim)
+    destination.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix='.isearch-migrate-', dir=destination) as temporary:
+        db = VectorDB(table_name, Path(temporary), dim)
+        expected = set()
+        for batch in batches:
+            records = []
+            for row in batch:
+                label = row['label']
+                if not isinstance(label, str) or not label:
+                    raise ValueError('Legacy labels must be nonempty strings')
+                if Path(label).is_absolute():
+                    item = db.model.from_path(row['vector'], label)
+                else:
+                    item = db.model.from_feature(row['vector'], label=label)
+                records.append(item)
+                expected.add(item.id)
+            db.add_items(records)
+        if db.count != len(expected):
+            raise ValueError('Migrated row count does not match unique vector IDs')
+        for batch in db.table.search().limit(None).to_batches():
+            for row in batch.to_pylist():
+                db.model.model_validate(row)
+        if target.exists():
+            raise ValueError('Destination table appeared during migration')
+        db.path.rename(target)
+    return len(expected)
 
 
 def main() -> None:
+    """Parse migration arguments and report the number of migrated image records."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path, help='Trusted HNSW database directory; stop the service first')
-    parser.add_argument('destination', type=Path, help='New LanceDB directory (must not exist)')
-    parser.add_argument('--dim', type=int, default=512, help='Original model vector dimension')
+    parser.add_argument('source', type=Path, help='Trusted legacy directory; stop the service first')
+    parser.add_argument('destination', type=Path, help='LanceDB root directory')
+    parser.add_argument('--table', dest='table_name', default='default', help='New destination table name')
+    parser.add_argument('--dim', type=int, default=512, help='HNSW vector dimension; inferred for LanceDB')
     args = parser.parse_args()
-    count = migrate(args.source, args.destination, args.dim)
-    print(f'Migrated {count} items to {args.destination}; source was preserved.')
+    count = migrate(args.source, args.destination, args.dim, table_name=args.table_name)
+    print(f'Migrated {count} unique records to {args.destination / (args.table_name + ".lance")}; source preserved.')
 
 
 if __name__ == '__main__':

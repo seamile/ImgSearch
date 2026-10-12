@@ -14,8 +14,6 @@ from imgsearch.config import BASE_DIR
 
 EXTENSIONS = Image.registered_extensions().keys()
 
-Feature = list[float]
-
 
 def colorize(text: str, color: str = '', bold=False) -> str:
     """Colorize text"""
@@ -122,6 +120,7 @@ class ColorFormatter(logging.Formatter):
 
     @staticmethod
     def colorize(level: str, message: str) -> str:
+        """Color a log message according to its severity level."""
         colors = {
             'DEBUG': 'gray',
             'INFO': 'blue',
@@ -132,6 +131,7 @@ class ColorFormatter(logging.Formatter):
         return colorize(message, colors.get(level.upper(), ''))
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a log record and apply its severity color."""
         message = super().format(record)
         return self.colorize(record.levelname, message)
 

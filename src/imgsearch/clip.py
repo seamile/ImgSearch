@@ -14,7 +14,8 @@ import torch
 from PIL import Image
 
 from imgsearch import config as cfg
-from imgsearch.utils import Feature, cpu_count
+from imgsearch.models import Feature
+from imgsearch.utils import cpu_count
 from tinyclip import create_model_and_transforms, get_tokenizer
 
 
@@ -62,6 +63,7 @@ class Clip:
             self.model = self.model.float()
 
     def __del__(self):
+        """Shut down the preprocessing executor if it has been initialized."""
         if 'executor' in self.__dict__:
             self.executor.shutdown(wait=False)
             del self.executor
@@ -124,7 +126,7 @@ class Clip:
             img_features /= img_features.norm(dim=-1, keepdim=True)
 
         img_features = img_features.cpu().float()
-        return [f.numpy().tolist() for f in img_features]
+        return [f.numpy() for f in img_features]
 
     def embed_image(self, image: Image.Image) -> Feature:
         """Embed a single image to a feature vector"""
@@ -133,7 +135,7 @@ class Clip:
     def embed_text(self, *text: str) -> Feature:
         """Embed a single text string to a feature vector"""
         if not text:
-            return []
+            return np.empty(0, dtype=np.float32)
 
         # Process text
         text_tensor = self.tokenizer(list(text))
@@ -147,7 +149,7 @@ class Clip:
             text_features /= text_features.norm(dim=-1, keepdim=True)
 
         text_features = text_features.cpu().float()
-        return text_features.numpy().tolist()[0]
+        return text_features.numpy()[0]
 
     def compare_images(self, img1: Image.Image, img2: Image.Image) -> float:
         """Compare similarity between two images"""

@@ -73,7 +73,6 @@ BATCH_SIZE = 100  # Images per batch for processing
 # Database configuration
 BASE_DIR = Path.home() / '.isearch'  # User home directory for DBs (~/.isearch)
 DB_NAME = 'default'  # Default database name
-TABLE_NAME = 'images'
 INDEX_MIN_ROWS = 10000  # Build the cosine IVF-HNSW index above this size.
 
 # Service and networking

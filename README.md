@@ -122,14 +122,14 @@ isearch service remove
 
 ### 2. Add Images to Index
 
-The `add` command indexes images in the specified database. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively, with duplicates automatically filtered (based on labels).
+The `add` command indexes images in the specified database. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively. Every image is embedded; identical vector IDs merge their paths. Labels are filenames without extensions and may repeat.
 
 ```shell
 # Add single files or folders to the default database
 isearch add ./images/photo1.jpg ./pictures/
 
-# Use filename as label (default: absolute path)
-isearch add -l name ./images/
+# Update labels of existing vector IDs from incoming filenames
+isearch add --update-label ./images/
 
 # Specify database and binding
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
@@ -173,9 +173,8 @@ Results sorted by similarity descending, show path and percentage. Example:
 ```
 Searching sports car...
 Found 5 similar images (similarity ≥ 70.0%):
- 1. /path/to/img1.jpg	92.3%
- 2. /path/to/img2.png	85.1%
- 3. /path/to/img3.jpg	78.4%
+b681d3e48ac00c09	img1	92.3%	['/path/to/img1.jpg']
+1dff079456ec80b0	img2	85.1%	['/path/to/img2.png']
 ```
 
 ### 4. Database Management
@@ -211,8 +210,20 @@ Database "my_db"
 #### Delete Specific Data
 
 ```shell
-isearch db my_db --delete /path/to/img1.jpg /path/to/img2.jpg ...
+isearch db my_db --delete img1 img2
+isearch db my_db --delete-id b681d3e48ac00c09
 ```
+
+Both deletion modes show all matching IDs, labels, and paths for confirmation. Label deletion includes every matching record.
+
+#### Repair Paths
+
+```shell
+isearch db --prune          # default table only
+isearch db --prune my_db
+```
+
+Prune removes missing paths and duplicates within a record. Paths shared by different IDs are re-embedded using the add preprocessing pipeline and associated with the matching ID, creating it if needed. Other paths and records with empty paths are retained. Failed reads/inference preserve the affected associations. Mount all relevant disks first; paths belong to the server filesystem.
 
 #### Clear Database
 
@@ -228,7 +239,7 @@ isearch db --clear my_db
 isearch db --drop my_db
 ```
 
-**⚠️ Warning**: All delete operations are irreversible. `--clear` deletes all data in the database, `--drop` deletes the database file.
+**⚠️ Warning**: All delete operations are irreversible. `--clear` deletes all data in the database, `--drop` deletes only the selected table.
 
 ### 5. Compare Two Images
 
@@ -251,23 +262,23 @@ from imgsearch.client import Client
 # Create client (connects to local service by default)
 cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
 
-# Add images (returns count)
+# Submit images (returns accepted queue count, not new record count)
 image_paths = ['./img1.jpg', './img2.png', './folder/']
-n_added = cli.add_images(image_paths, label_type='path')  # or 'name'
-print(f'Added {n_added} images for processing')
+n_added = cli.add_images(image_paths, update_label=False)
+print(f'Submitted {n_added} images for processing')
 
-# Search by image (returns [(path, similarity%), ...] or None)
+# Search by image (returns id/label/paths/score records or None)
 results = cli.search('./query.jpg', num=5, similarity=80)
 if results:
-    for path, sim in results:
-        print(f"{path} (similarity: {sim}%)")
+    for row in results or []:
+        print(row["id"], row["label"], row["paths"], row["score"])
 else:
     print('No matching results or search queue full')
 
 # Search by text
 results = cli.search('red apple', num=10, similarity=0)
-for path, sim in results:
-    print(f"{path} (similarity: {sim}%)")
+for row in results or []:
+    print(row["id"], row["label"], row["paths"], row["score"])
 
 # Compare similarity (returns 0-100 float)
 similarity = cli.compare_images('./img1.jpg', './img2.jpg')
@@ -439,14 +450,14 @@ isearch service remove
 
 ### 2. 添加图片到索引
 
-`add` 命令用于将图片添加到指定数据库。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归添加所有图片，自动过滤重复项（基于 Label）。
+`add` 命令用于将图片添加到指定数据库。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归扫描，每张图片计算向量后按向量 ID 去重并合并路径。label 固定为无扩展名文件名，允许重名。
 
 ```shell
 # 添加单个文件或文件夹到默认数据库
 isearch add ./images/photo1.jpg ./pictures/
 
-# 使用文件名作为标签（默认：绝对路径）
-isearch add -l name ./images/
+# 对已有向量 ID，使用本次文件名更新 label（默认保留原 label）
+isearch add --update-label ./images/
 
 # 指定数据库和绑定
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
@@ -491,9 +502,8 @@ isearch -n 3 -t 70 "sports car"
 ```
 Searching sports car...
 Found 3 similar images (similarity ≥ 70%):
- 1. /path/to/img1.jpg	92.3%
- 2. /path/to/img2.png	85.1%
- 3. /path/to/img3.jpg	78.4%
+b681d3e48ac00c09	img1	92.3%	['/path/to/img1.jpg']
+1dff079456ec80b0	img2	85.1%	['/path/to/img2.png']
 ```
 
 ### 4. 数据库管理
@@ -529,8 +539,20 @@ Database "my_db"
 #### 删除指定数据
 
 ```shell
-isearch db my_db --delete /path/to/img1.jpg /path/to/img2.jpg ...
+isearch db my_db --delete img1 img2
+isearch db my_db --delete-id b681d3e48ac00c09
 ```
+
+两种删除方式都会完整列出匹配记录的 ID、label 和 paths，确认后删除。按 label 删除时包含所有同名记录。
+
+#### 修复路径
+
+```shell
+isearch db --prune          # 仅处理 default 表
+isearch db --prune my_db
+```
+
+prune 移除失效路径及同 ID 内的重复路径。跨 ID 共享的路径通过与 add 相同的预处理重新计算向量，再关联到匹配的 ID，必要时新建记录。其他路径和 paths 为空的记录保留；读取或推理失败时保留相关关联。路径属于服务端文件系统，运行前请挂载相关磁盘。
 
 #### 清空数据库
 
@@ -546,7 +568,7 @@ isearch db --clear my_db
 isearch db --drop my_db
 ```
 
-**⚠️ 警告**：所有删除操作均不可逆，`--clear` 会删除数据库中所有数据，`--drop` 会删除数据库文件。
+**⚠️ 警告**：所有删除操作均不可逆，`--clear` 会删除数据库中所有数据，`--drop` 仅删除所选表。
 
 ### 5. 比较两张图片
 
@@ -569,23 +591,23 @@ from imgsearch.client import Client
 # 创建客户端（默认连接本地服务）
 cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
 
-# 添加图片（返回添加数量）
+# 提交图片（返回接受处理的数量，不是新增记录数）
 image_paths = ['./img1.jpg', './img2.png', './folder/']
-n_added = cli.add_images(image_paths, label_type='path')  # 或 'name'
-print(f'已添加 {n_added} 张图片进行处理')
+n_added = cli.add_images(image_paths, update_label=False)
+print(f'已提交 {n_added} 张图片进行处理')
 
-# 以图搜图（返回 [(路径, 相似度%), ...] 或 None）
+# 以图搜图（返回包含 id、label、paths、score 的记录列表或 None）
 results = cli.search('./query.jpg', num=5, similarity=80)
 if results:
-    for path, sim in results:
-        print(f"{path} (相似度: {sim}%)")
+    for row in results or []:
+        print(row["id"], row["label"], row["paths"], row["score"])
 else:
     print('无匹配结果或搜索队列满')
 
 # 以文字搜图
 results = cli.search('red apple', num=10, similarity=0)
-for path, sim in results:
-    print(f"{path} (相似度: {sim}%)")
+for row in results or []:
+    print(row["id"], row["label"], row["paths"], row["score"])
 
 # 比较相似度（返回 0-100 float）
 similarity = cli.compare_images('./img1.jpg', './img2.jpg')
@@ -635,21 +657,27 @@ isearch service start -m NEW_MODEL_KEY
 
 ## LanceDB storage / 存储迁移
 
-LanceDB 0.40.0 commits each write immediately. Integer IDs remain stable across updates and are not reused after deletion. Database info reports row count and disk bytes (including retained versions); there is no fixed capacity or `--rebuild` option. Deletions disappear from searches immediately, while old versions may keep files until normal maintenance cleans them up. Use one writing service per database and keep the same TinyCLIP model when querying an existing database.
+The work directory is one LanceDB database: `~/.isearch/default.lance`, `~/.isearch/albumd.lance`, etc. The CLI keeps `db` and `-d` to select a named image table. `ImageModel` in `imgsearch.models` defines `id: str`, `label: str`, `paths: list[str]` (default `[]`), and `vector: Vector(dim)` (float32). IDs are xxHash64 hex digests of the stored little-endian float32 vector bytes. `Clip.embed_images()`, `embed_image()`, and `embed_text()` return NumPy vectors; search RPC returns plain `id/label/paths/score` dictionaries without vectors.
 
-旧 HNSW 库不会自动修改或被当成空库打开。先停止服务，备份旧库，然后迁移到一个不存在的新目录；向量和原 ID/label 会保留，无需重新跑模型。只对可信的本地备份运行迁移工具（旧 mapping 使用 pickle）。维度和模型必须与原库一致。
+新增时按 ID 合并 paths，不检查旧路径、不从其他 ID 转移路径。默认保留原 label，`--update-label` 才会更新它。向量按字节判同，不是文件哈希或相似图去重；设备、模型和推理批次造成的浮点差异可能产生不同 ID。同一表请继续使用相同模型。
+
+LanceDB commits writes immediately. Information reports each table's row count and disk bytes, including retained versions. There is no fixed capacity or `--rebuild`. Use one writing service per root. Prune runs synchronously and blocks storage operations while repairing the selected table; it does not re-embed valid paths belonging to only one ID.
+
+旧 LanceDB 的 `name/images.lance` 和旧 HNSW 目录不会被自动转换。先停止服务，再显式迁移到根库下未存在的表。迁移保留原始向量数值，按哈希合并记录，不重新推理；原整数 ID 和 next_id 不保留。同 ID 按旧整数 ID 顺序保留第一个 label，合并全部路径。旧绝对路径 label 拆成文件名和路径，旧名称 label 原样保留且 paths 为空。迁移通过临时表验证后发布，失败不发布，源目录始终保留。
 
 ```shell
-# Install the optional legacy reader dependencies if needed.
-# 如有需要，安装读取旧格式所需的可选依赖。
+# Optional: only needed to read trusted HNSW backups (mapping uses pickle).
 pip install 'imgsearch[migration]'
 
-# Stop the service, then export into a NEW directory.
-isearch stop
-python -m imgsearch.migrate ~/.isearch/default ~/.isearch/default_lance --dim 512
+isearch service stop
+# Legacy LanceDB: vector dimension is inferred.
+python -m imgsearch.migrate ~/.isearch/default ~/.isearch --table default
+# HNSW: specify its original vector dimension.
+python -m imgsearch.migrate /backup/hnsw ~/.isearch --table recovered --dim 512
+isearch service start
 ```
 
-Check counts and searches before switching clients to `default_lance`. The original directory is preserved for rollback; new LanceDB writes are not copied back to it. 已迁移目录包含 `images.lance`；请核对条目数和搜索结果，再切换数据库名。LanceDB 写入立即持久化，删除立即从查询结果中消失，但历史版本的文件需要等后续维护回收。`--rebuild`、固定容量和手动保存已移除；同一数据库只运行一个写入服务。
+Check counts and searches before removing old backups; merged duplicate vectors reduce row counts. Migrated IDs are hashes of the preserved vectors, so re-embedding may produce a different ID. New writes are not copied back to the old directories. Existing Python/RPC callers must update for the new search result shape, `add_images(..., update_label=...)`, and hash IDs. `-l path/name` has been removed.
 
 For this development environment, preserve the locally compiled packages already installed from `~/src/package/simple`:
 

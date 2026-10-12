@@ -2,22 +2,23 @@ import logging
 import os
 import re
 import signal
+import stat
 import threading
 from collections import defaultdict
-from collections.abc import Sequence
 from functools import cached_property
 from gc import collect
 from pathlib import Path
-from queue import Full, Queue
-from typing import Any, ClassVar
+from queue import Empty, Full, Queue
+from typing import Any
 
 import psutil
 import Pyro5.server
 from PIL import Image
 
 from imgsearch import config as cfg
+from imgsearch.models import ImageInfo, SearchResult
 from imgsearch.storage import VectorDB
-from imgsearch.utils import bytes2img, get_logger, print_err, print_warn
+from imgsearch.utils import bytes2img, get_logger, img2bytes, print_err, print_warn
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -34,9 +35,6 @@ class RPCService:
     including adding images to the index, searching by image or text, and comparing images.
     All methods are thread-safe using a simple lock.
     """
-
-    databases: ClassVar[dict[str, VectorDB]] = {}
-    database_lock: ClassVar[threading.RLock] = threading.RLock()
 
     def __init__(
         self,
@@ -56,8 +54,9 @@ class RPCService:
         self.model_key = model_key
         self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
-        # Async processing queue - now includes db_name
-        self.image_queue: Queue[tuple[str, Image.Image, str]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
+        self.databases: dict[str, VectorDB] = {}
+        self.database_lock = threading.RLock()
+        self.image_queue: Queue[tuple[str, Image.Image, str, bool]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
@@ -92,76 +91,49 @@ class RPCService:
             'Model': self.model_key,
         }
 
-    def handle_check_exist_labels(self, labels: Sequence[str], db_name: str) -> list[bool]:
-        """Check if multiple labels exist in the database"""
-        with self.database_lock:
-            db = self._get_db(db_name)
-            return db.has_labels(labels)
-
-    def _process_images(self, images: list[Image.Image], labels: list[str], db_name: str):
-        """Process a batch of images asynchronously."""
-        self.logger.debug(f'Processing batch of {len(images)} images ({db_name})')
+    def _process_images(self, images: list[Image.Image], paths: list[str], db_name: str, update_label: bool = False):
+        """Embed queued images and merge records by vector identity."""
         try:
-            # Embed images
             features = self.clip.embed_images(images)
-            # Add features to database
             with self.database_lock:
                 db = self._get_db(db_name)
-                db.add_items(labels, features, overwrite=True)
-
-            self.logger.debug(f'Added {len(images)} images for db "{db_name}" ({db.count=})')
-
-        except Exception as e:
-            self.logger.error(f'Failed to process batch: {e} ({e.__class__.__name__})')
+                rows = [db.model.from_path(feature, path) for path, feature in zip(paths, features, strict=True)]
+                changed = db.add_items(rows, update_label=update_label)
+            self.logger.debug(f'Updated {changed} records in table "{db_name}"')
+        except Exception:
+            self.logger.exception('Failed to process image batch')
 
     def _process_queue(self) -> None:
-        """Background thread to process images from queue."""
-        # Group images by database name
-        batches: dict[str, tuple[list[Image.Image], list[str]]] = defaultdict(lambda: ([], []))
-
+        """Process queued images in batches grouped by table and label update policy."""
+        batches = defaultdict(lambda: ([], []))
         while True:
             try:
-                # Get image from queue
-                label, image, db_name = self.image_queue.get(timeout=1)
+                path, image, db_name, update_label = self.image_queue.get(timeout=1)
+                key = (db_name, update_label)
+                images, paths = batches[key]
+                images.append(image)
+                paths.append(path)
+                if len(images) >= cfg.BATCH_SIZE:
+                    self._process_images(images, paths, *key)
+                    del batches[key]
+            except Empty:
+                for key, (images, paths) in batches.items():
+                    self._process_images(images, paths, *key)
+                batches.clear()
 
-                batch_images, batch_labels = batches[db_name]
-                batch_images.append(image)
-                batch_labels.append(label)
-
-                # Process batch when full
-                if len(batch_images) >= cfg.BATCH_SIZE:
-                    self._process_images(batch_images, batch_labels, db_name)
-                    batches[db_name] = ([], [])
-
-            except Exception:
-                # Process remaining images in all batches
-                for db_name, (batch_images, batch_labels) in batches.items():
-                    if batch_images:
-                        self._process_images(batch_images, batch_labels, db_name)
-                        batches[db_name] = ([], [])
-
-    def handle_add_images(self, images: dict[str, bytes], db_name: str) -> int:
-        """
-        Add images to the search index.
-
-        Args:
-            images: Dictionary mapping labels to image bytes
-            db_name: Name of the database to add images to
-
-        Returns:
-            Number of images queued for processing
-        """
-        self.logger.info(f'[AddImages] {len(images)} images received for db: {db_name}')
-
+    def handle_add_images(self, images: dict[str, bytes], db_name: str, update_label: bool = False) -> int:
+        """Queue image bytes keyed by absolute server-local paths; return accepted count."""
+        self._get_db(db_name)  # Reject legacy tables before accepting asynchronous work.
+        if any(not isinstance(path, str) or not Path(path).is_absolute() for path in images):
+            raise ValueError('Image paths must be absolute server-local paths')
         queued_count = 0
-        try:
-            for label, image_bytes in images.items():
+        for path, image_bytes in images.items():
+            try:
                 image = bytes2img(image_bytes)
-                self.image_queue.put((label, image, db_name))
+                self.image_queue.put((path, image, db_name, update_label), timeout=5)
                 queued_count += 1
-        except Full as e:
-            self.logger.error(f'Queue full, dropping image: {e}')
-
+            except (Full, OSError, ValueError):
+                self.logger.exception('Failed to queue image %s', path)
         return queued_count
 
     def handle_search(
@@ -170,7 +142,7 @@ class RPCService:
         k: int = 10,
         similarity: int = 0,
         db_name: str = cfg.DB_NAME,
-    ) -> list[tuple[str, float]] | None:
+    ) -> list[SearchResult] | None:
         """
         Search for similar images using image or text query.
 
@@ -181,7 +153,7 @@ class RPCService:
             db_name: Name of the database to search in
 
         Returns:
-            List of tuples containing (image_path, similarity_percentage)
+            Records containing id, label, paths, and similarity score
             Returns None if search queue is full
             Returns empty list if no results found
         """
@@ -239,7 +211,7 @@ class RPCService:
             Dictionary mapping database names to boolean indicating whether they are loaded
         """
         try:
-            dbs = {name: name in RPCService.databases for name in VectorDB.db_list(self.base_dir)}
+            dbs = {name: name in self.databases for name in VectorDB.db_list(self.base_dir)}
             self.logger.debug(f'List dbs: {dbs}')
             return dbs
         except Exception as e:
@@ -272,24 +244,108 @@ class RPCService:
     def handle_unload_dbs(self, *names: str) -> int:
         """Unload databases to free memory"""
         with self.database_lock:
-            names = names or tuple(RPCService.databases.keys())
+            names = names or tuple(self.databases.keys())
             count = 0
             for name in names:
-                if name not in RPCService.databases:
+                if name not in self.databases:
                     continue
-                RPCService.databases.pop(name)
+                self.databases.pop(name)
                 count += 1
                 self.logger.debug(f'Unloaded db: {name}')
         collect()
         return count
 
-    def handle_delete_images(self, keys: list[int | str], db_name: str):
+    def handle_get_images(self, keys: list[str], db_name: str, by_id: bool = False) -> list[ImageInfo]:
+        """Resolve all requested labels or IDs for a deletion preview."""
+        with self.database_lock:
+            if db_name not in VectorDB.db_list(self.base_dir):
+                raise KeyError(f'Table not found: {db_name}')
+            return self._get_db(db_name).get_info(keys, by_id=by_id)
+
+    def handle_prune_db(self, db_name: str = cfg.DB_NAME) -> dict[str, int]:  # ruff: ignore[complex-structure]
+        """Clean path associations; preserve records even when every path is removed."""
+        stats = {
+            'checked_paths': 0,
+            'deduplicated_paths': 0,
+            'removed_paths': 0,
+            'recomputed_paths': 0,
+            'inserted_rows': 0,
+            'errors': 0,
+        }
+        with self.database_lock:
+            if db_name not in VectorDB.db_list(self.base_dir):
+                raise KeyError(f'Table not found: {db_name}')
+            db = self._get_db(db_name)
+            with db.wlock:
+                paths_by_id, changed, owners = {}, set(), defaultdict(set)
+                for row in db.iter_paths():
+                    paths = list(dict.fromkeys(row['paths']))
+                    paths_by_id[row['id']] = paths
+                    if paths != row['paths']:
+                        changed.add(row['id'])
+                        stats['deduplicated_paths'] += len(row['paths']) - len(paths)
+                    for path in paths:
+                        owners[path].add(row['id'])
+                duplicates = {}
+                for path, ids in owners.items():
+                    stats['checked_paths'] += 1
+                    try:
+                        valid = stat.S_ISREG(Path(path).stat().st_mode)
+                    except (FileNotFoundError, NotADirectoryError):
+                        valid = False
+                    except OSError:
+                        stats['errors'] += 1
+                        self.logger.exception('Cannot check path %s; preserving associations', path)
+                        continue
+                    if not valid:
+                        for key in ids:
+                            paths_by_id[key].remove(path)
+                            changed.add(key)
+                            stats['removed_paths'] += 1
+                    elif len(ids) > 1:
+                        duplicates[path] = ids
+
+                # Bound vector loading when many files have disappeared.
+                changed = list(changed)
+                for offset in range(0, len(changed), 500):
+                    records = db.get_items(changed[offset : offset + 500])
+                    db.replace_items(record.model_copy(update={'paths': paths_by_id[record.id]}) for record in records)
+
+                for path, ids in duplicates.items():
+                    try:
+                        # Match the pixels sent by add, including its lossy WebP conversion.
+                        with Image.open(path) as image:
+                            prepared = bytes2img(img2bytes(image, 384))
+                        with prepared:
+                            feature = self.clip.embed_image(prepared)
+                        incoming = db.model.from_path(feature, path)
+                        records = {record.id: record for record in db.get_items([*ids, incoming.id])}
+                        target = records[incoming.id].merge(incoming) if incoming.id in records else incoming
+                        replacements = [target]
+                        removed = 0
+                        for key in ids - {incoming.id}:
+                            record = records[key]
+                            replacements.append(
+                                record.model_copy(update={'paths': [p for p in record.paths if p != path]})
+                            )
+                            removed += 1
+                        # Publish each repaired path atomically, only after successful inference.
+                        db.replace_items(replacements)
+                        stats['removed_paths'] += removed
+                        stats['recomputed_paths'] += 1
+                        stats['inserted_rows'] += int(incoming.id not in records)
+                    except Exception:
+                        stats['errors'] += 1
+                        self.logger.exception('Cannot repair path %s; preserving associations', path)
+        return stats
+
+    def handle_delete_images(self, keys: list[str], db_name: str, by_id: bool = False):
         """Delete images from the specified database."""
         self.logger.warning(f'[Delete] Delete {len(keys)} images from {db_name}')
         try:
             with self.database_lock:
                 db = self._get_db(db_name)
-                db.delete(*keys)
+                db.delete(*keys, by_id=by_id)
             return True
         except Exception as e:
             self.logger.error(f'Failed to delete images: {e}')
@@ -378,6 +434,7 @@ class Server:
         bind: str = cfg.UNIX_SOCKET,
         log_level: str = 'info',
     ):
+        """Initialize the RPC service, logging, and server lifecycle state."""
         self._shutdown = threading.Event()
         self.base_dir = base_dir
         self.model_key = model_key

@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 from argparse import ArgumentDefaultsHelpFormatter as DefaultFmt
@@ -6,6 +7,7 @@ from argparse import _SubParsersAction as SubParsers
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import local
+from typing import cast
 
 import Pyro5.api
 import Pyro5.errors
@@ -15,6 +17,7 @@ from imgsearch import __version__
 from imgsearch import config as cfg
 from imgsearch import utils as ut
 from imgsearch.exceptions import NotRunningError
+from imgsearch.models import ImageInfo, SearchResult
 from imgsearch.server import Server
 from imgsearch.setup import remove_service, setup_service
 
@@ -64,69 +67,37 @@ class Client:
         """Get the status of the imgsearch service."""
         return self.service.handle_status()  # type: ignore
 
-    def _preprocess_images(self, batch: dict[str, str]) -> None:
-        """Process a batch of image paths."""
-        send_dict: dict[str, bytes] = {}
-        for label, path in batch.items():
+    def _preprocess_images(self, paths: list[str], update_label: bool) -> int:
+        """Encode and submit readable images, returning the accepted queue count."""
+        images = {}
+        for path in paths:
             try:
-                img = Image.open(path)
-                send_dict[label] = ut.img2bytes(img, 384)
-                if len(send_dict) >= cfg.BATCH_SIZE:
-                    ut.print_inf(f'Sending {len(send_dict)} images to the server...')
-                    self.service.handle_add_images(send_dict, self.db_name)
-                    send_dict = {}
+                with Image.open(path) as image:
+                    images[path] = ut.img2bytes(image, 384)
             except Exception as e:
                 ut.print_err(f'Failed to process image {path}: {e}')
+        if not images:
+            return 0
+        try:
+            return cast(int, self.service.handle_add_images(images, self.db_name, update_label=update_label))
+        except Exception as e:
+            ut.print_err(f'Failed to submit images: {e}')
+            return 0
 
-        if send_dict:
-            ut.print_inf(f'Sending {len(send_dict)} images to the server...')
-            self.service.handle_add_images(send_dict, self.db_name)
+    def add_images(self, paths: list[str], *, update_label: bool = False) -> int:
+        """Submit images for vector-based deduplication; return the accepted queue count."""
+        futures, batch = [], []
+        with ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2)) as pool:
+            for path in ut.find_all_images(paths):
+                batch.append(os.path.abspath(os.path.expanduser(str(path))))
+                if len(batch) >= cfg.BATCH_SIZE:
+                    futures.append(pool.submit(self._preprocess_images, batch, update_label))
+                    batch = []
+            if batch:
+                futures.append(pool.submit(self._preprocess_images, batch, update_label))
+            return sum(future.result() for future in futures)
 
-    def _filter_out_exists(self, imgs: dict[str, str]) -> dict[str, str]:
-        """Filter out existing images from the database."""
-        if labels := list(imgs.keys()):
-            result: list[bool] = self.service.handle_check_exist_labels(labels, self.db_name)  # type: ignore
-            return {lb: imgs[lb] for lb, exist in zip(labels, result, strict=True) if not exist}
-        return {}
-
-    def add_images(self, paths: list[str], label_type: str = 'path') -> int:
-        """Handle adding images to the index using thread pool."""
-        ut.print_inf('Collecting images...')
-        pool = ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2))
-        found_ipaths: dict[str, str] = {}
-        to_added: dict[str, str] = {}
-        n_images = 0
-
-        for img_path in ut.find_all_images(paths):
-            ut.print_msg(f'Found {img_path}')
-            label = img_path.stem if label_type == 'name' else str(img_path.resolve())
-            found_ipaths[label] = str(img_path)
-
-            if len(found_ipaths) >= cfg.BATCH_SIZE:
-                new_images = self._filter_out_exists(found_ipaths)
-                to_added.update(new_images)
-                found_ipaths = {}
-                if len(to_added) >= cfg.BATCH_SIZE:
-                    pool.submit(self._preprocess_images, to_added)
-                    n_images += len(to_added)
-                    to_added = {}
-
-        # Process remaining found_ipaths
-        if found_ipaths:
-            new_images = self._filter_out_exists(found_ipaths)
-            to_added.update(new_images)
-
-        # Submit remaining to_added
-        if to_added:
-            pool.submit(self._preprocess_images, to_added)
-            n_images += len(to_added)
-
-        ut.print_inf(f'Preprocessing {n_images} images...')
-        pool.shutdown(wait=True)
-
-        return n_images
-
-    def search(self, target: str | Image.Image, num: int = 10, similarity: int = 0) -> list[tuple[str, float]] | None:
+    def search(self, target: str | Image.Image, num: int = 10, similarity: int = 0) -> list[SearchResult] | None:
         """Handle search operations."""
         query: str | bytes
         if isinstance(target, str):
@@ -174,10 +145,18 @@ class Client:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return None
 
-    def delete_images(self, labels: list[str]) -> bool:
+    def get_images(self, keys: list[str], *, by_id: bool = False) -> list[ImageInfo]:
+        """Fetch image metadata by label or ID from the service."""
+        return cast(list[ImageInfo], self.service.handle_get_images(keys, self.db_name, by_id=by_id))
+
+    def prune_db(self) -> dict[str, int]:
+        """Prune stale or conflicting image paths and return cleanup statistics."""
+        return cast(dict[str, int], self.service.handle_prune_db(self.db_name or cfg.DB_NAME))
+
+    def delete_images(self, keys: list[str], *, by_id: bool = False) -> bool:
         """Handle image deletion request."""
         try:
-            return self.service.handle_delete_images(labels, self.db_name)  # type: ignore
+            return self.service.handle_delete_images(keys, self.db_name, by_id=by_id)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
@@ -300,7 +279,7 @@ def create_parser() -> ArgumentParser:
         help='Server bind address (UDS path or ip:port)',
     )
     arg_db = ArgumentParser(add_help=False)
-    arg_db.add_argument('-d', dest='db_name', default=cfg.DB_NAME, help='Database name')
+    arg_db.add_argument('-d', dest='db_name', default=cfg.DB_NAME, help='Image table name')
 
     # Main parser
     parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
@@ -364,19 +343,23 @@ def create_parser() -> ArgumentParser:
         help='Add images to database',
         formatter_class=DefaultFmt,
     )
-    cmd_add.add_argument('-l', dest='label', choices=['path', 'name'], default='path', help='Label naming method')
+    cmd_add.add_argument(
+        '--update-label', action='store_true', help='Update existing image labels from incoming filenames'
+    )
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
-    cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Database management operations')
-    cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Database name')
+    cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Manage named image tables in the database root')
+    cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Image table name')
     db_group = cmd_db.add_mutually_exclusive_group(required=True)
-    db_group.add_argument('-l', '--list', action='store_true', help='List all available databases')
-    db_group.add_argument('-i', '--info', action='store_true', help='Show database information')
-    db_group.add_argument('-u', '--unload', action='store_true', help='Unload all databases from memory')
-    db_group.add_argument('--delete', nargs='+', metavar='LABEL', help='Delete images by label')
-    db_group.add_argument('--clear', action='store_true', help='Clear the entire database')
-    db_group.add_argument('--drop', action='store_true', help='Drop the specified database')
+    db_group.add_argument('-l', '--list', action='store_true', help='List all available image tables')
+    db_group.add_argument('-i', '--info', action='store_true', help='Show selected table information')
+    db_group.add_argument('-u', '--unload', action='store_true', help='Unload all image tables from memory')
+    db_group.add_argument('--delete', nargs='+', metavar='LABEL', help='Preview and delete all images matching labels')
+    db_group.add_argument('--delete-id', nargs='+', metavar='ID', help='Preview and delete images by vector ID')
+    db_group.add_argument('--prune', action='store_true', help='Repair paths in the selected table (default: default)')
+    db_group.add_argument('--clear', action='store_true', help='Clear the selected image table')
+    db_group.add_argument('--drop', action='store_true', help='Drop the selected image table')
 
     # Compare images subcommand
     cmd_cmp = subcmd.add_parser('cmp', parents=[arg_bind], help='Compare similarity of two images')
@@ -407,8 +390,8 @@ def main() -> None:  # ruff: ignore[complex-structure]
 
     elif args.command == 'add':
         client = Client(db_name=args.db_name, bind=args.bind)
-        n_added = client.add_images(args.paths, args.label)
-        ut.print_inf(f'Added {n_added} images for processing')
+        n_added = client.add_images(args.paths, update_label=args.update_label)
+        ut.print_inf(f'Submitted {n_added} images for processing')
 
     elif args.command == 'cmp':
         client = Client(bind=args.bind)
@@ -446,19 +429,35 @@ def main() -> None:  # ruff: ignore[complex-structure]
             else:
                 ut.print_inf('Not loaded any databases.')
 
-        elif args.delete:
-            if args.db_name is None:
-                ut.print_err('Database name is required.')
+        elif args.prune:
+            try:
+                stats = client.prune_db()
+                for name, count in stats.items():
+                    print(f'{name}: {count}')
+                if stats['errors']:
+                    sys.exit(1)
+            except Exception as e:
+                ut.print_err(f'Prune failed: {e}')
                 sys.exit(1)
 
-            notice = ut.colorize(
-                f'Are you sure to delete {len(args.delete)} images from DB "{args.db_name}"? [y/N]: ', 'yellow', True
-            )
+        elif args.delete or args.delete_id:
+            if args.db_name is None:
+                ut.print_err('Table name is required.')
+                sys.exit(1)
+            try:
+                rows = client.get_images(args.delete_id or args.delete, by_id=bool(args.delete_id))
+            except Exception as e:
+                ut.print_err(f'Cannot prepare deletion: {e}')
+                sys.exit(1)
+            for row in rows:
+                print(f'{row["id"]}\t{row["label"]}\t{row["paths"]}')
+            notice = f'Delete these {len(rows)} image records from "{args.db_name}"? [y/N]: '
             if input(notice).lower() == 'y':
-                if client.delete_images(args.delete):
-                    ut.print_inf(f'Successfully deleted {len(args.delete)} images from DB "{ut.bold(args.db_name)}".')
+                if client.delete_images([row['id'] for row in rows], by_id=True):
+                    ut.print_inf(f'Successfully deleted {len(rows)} image records.')
                 else:
-                    ut.print_err(f'Failed to delete images from DB "{args.db_name}".')
+                    ut.print_err('Failed to delete image records.')
+                    sys.exit(1)
 
         elif args.clear:
             if args.db_name is None:
@@ -495,11 +494,18 @@ def main() -> None:  # ruff: ignore[complex-structure]
         results = client.search(args.target, args.num, args.sim_thr)
         if results:
             ut.print_inf(f'Found {len(results)} images similar to {args.target} (similarity ≥ {args.sim_thr}%):', True)
-            for path, similarity in results:
-                print(f'{path}\t{similarity}%')
+            for row in results:
+                print(f'{row["id"]}\t{row["label"]}\t{row["score"]}%\t{row["paths"]}')
 
             if args.open_res:
-                ut.open_images([path for path, _ in results])
+                paths = []
+                for row in results:
+                    if path := next((p for p in row['paths'] if Path(p).is_file()), None):
+                        paths.append(path)
+                    else:
+                        ut.print_warn(f'No accessible path for image {row["id"]}')
+                if paths:
+                    ut.open_images(paths)
         elif results is None:
             ut.print_warn('Search queue is full, please try again later.')
             sys.exit(2)
