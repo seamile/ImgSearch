@@ -67,8 +67,15 @@ class Client:
         """Get the status of the imgsearch service."""
         return self.service.handle_status()  # type: ignore
 
-    def _preprocess_images(self, paths: list[str], update_label: bool) -> int:
+    def _preprocess_images(self, paths: list[str], update_label: bool, dedup_mode: str) -> int:
         """Encode and submit readable images, returning the accepted queue count."""
+        if dedup_mode == 'fast':
+            try:
+                labels = set(self.service.handle_existing_labels([Path(path).stem for path in paths], self.db_name))
+            except Exception as e:
+                ut.print_err(f'Failed to check existing labels: {e}')
+                return 0
+            paths = [path for path in paths if Path(path).stem not in labels]
         images = {}
         for path in paths:
             try:
@@ -79,22 +86,26 @@ class Client:
         if not images:
             return 0
         try:
-            return cast(int, self.service.handle_add_images(images, self.db_name, update_label=update_label))
+            return cast(int, self.service.handle_add_images(
+                images, self.db_name, update_label=update_label, dedup_mode=dedup_mode,
+            ))
         except Exception as e:
             ut.print_err(f'Failed to submit images: {e}')
             return 0
 
-    def add_images(self, paths: list[str], *, update_label: bool = False) -> int:
-        """Submit images for vector-based deduplication; return the accepted queue count."""
+    def add_images(self, paths: list[str], *, update_label: bool = False, dedup_mode: str = 'fast') -> int:
+        """Skip stored labels in fast mode, or embed all images in strict mode; return accepted count."""
+        if dedup_mode not in {'fast', 'strict'}:
+            raise ValueError('dedup_mode must be fast or strict')
         futures, batch = [], []
         with ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2)) as pool:
             for path in ut.find_all_images(paths):
                 batch.append(os.path.abspath(os.path.expanduser(str(path))))
                 if len(batch) >= cfg.BATCH_SIZE:
-                    futures.append(pool.submit(self._preprocess_images, batch, update_label))
+                    futures.append(pool.submit(self._preprocess_images, batch, update_label, dedup_mode))
                     batch = []
             if batch:
-                futures.append(pool.submit(self._preprocess_images, batch, update_label))
+                futures.append(pool.submit(self._preprocess_images, batch, update_label, dedup_mode))
             return sum(future.result() for future in futures)
 
     def search(self, target: str | Image.Image, num: int = 10, similarity: int = 0) -> list[SearchResult] | None:
@@ -346,6 +357,10 @@ def create_parser() -> ArgumentParser:
     cmd_add.add_argument(
         '--update-label', action='store_true', help='Update existing image labels from incoming filenames'
     )
+    cmd_add.add_argument(
+        '--dedup-mode', choices=['fast', 'strict'], default='fast',
+        help='fast: skip existing labels; strict: embed every image and merge by vector ID',
+    )
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
 
     # Database management subcommand
@@ -390,7 +405,7 @@ def main() -> None:  # ruff: ignore[complex-structure]
 
     elif args.command == 'add':
         client = Client(db_name=args.db_name, bind=args.bind)
-        n_added = client.add_images(args.paths, update_label=args.update_label)
+        n_added = client.add_images(args.paths, update_label=args.update_label, dedup_mode=args.dedup_mode)
         ut.print_inf(f'Submitted {n_added} images for processing')
 
     elif args.command == 'cmp':

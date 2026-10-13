@@ -116,6 +116,15 @@ class VectorDB:
                 raise KeyError(f'Images not found: {sorted(missing)}')
             return cast(list[ImageInfo], sorted(rows, key=itemgetter('id')))
 
+    def existing_labels(self, labels: Iterable[str]) -> set[str]:
+        """Return the supplied labels already stored, without loading vectors or paths."""
+        with self.wlock:
+            rows = (
+                self.table.search().where(self._condition(labels, by_id=False))
+                .select(['label']).limit(None).to_list()
+            )
+            return {row['label'] for row in rows}
+
     def iter_paths(self) -> Iterator[dict]:
         """Yield image IDs and paths in batches without loading vectors."""
         with self.wlock:

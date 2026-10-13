@@ -2,6 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from queue import Empty
 from unittest.mock import Mock, PropertyMock, patch
 
 import numpy as np
@@ -10,6 +11,7 @@ from PIL import Image
 from Pyro5.serializers import serializers
 
 from imgsearch.client import Client, create_parser, main
+from imgsearch import config as cfg
 from imgsearch.server import RPCService
 from imgsearch.utils import bytes2img, img2bytes
 
@@ -73,10 +75,92 @@ def test_client_add_same_names_and_flag(service, tmp_path):
         Image.new('RGB', (2, 2)).save(path)
         paths.append(str(path))
     with patch.object(Client, 'service', new_callable=PropertyMock, return_value=service):
-        assert Client('test').add_images(paths, update_label=True) == 2
+        assert Client('test').add_images(paths, update_label=True, dedup_mode='strict') == 2
     queued = [service.image_queue.get_nowait() for _ in range(2)]
     assert {entry[0] for entry in queued} == set(paths)
     assert all(entry[3] for entry in queued)
+    assert all(entry[4] == 'strict' for entry in queued)
+
+
+def test_fast_add_skips_existing_label_before_reading(service, tmp_path):
+    path = tmp_path / "it's here.png"
+    Image.new('RGB', (2, 2)).save(path)
+    db = service._get_db('test')
+    db.add_items([db.model.from_feature(feature(), label=path.stem)])
+    with patch.object(Client, 'service', new_callable=PropertyMock, return_value=service), patch('imgsearch.client.Image.open') as opened:
+        assert Client('test').add_images([str(path)]) == 0
+    opened.assert_not_called()
+    assert service.image_queue.empty()
+
+
+@pytest.mark.parametrize('mode, expected', [('fast', 1), ('strict', 3)])
+def test_dedup_before_embedding_including_queued_labels(service, tmp_path, mode, expected):
+    db = service._get_db('test')
+    original = db.model.from_feature(feature(), label='known')
+    db.add_items([original])
+    paths = [str(tmp_path / path) for path in ['known.png', 'one/new.png', 'two/new.jpg']]
+    images = [Image.new('RGB', (2, 2)) for _ in paths]
+    service.clip = Mock()
+    service.clip.embed_images.side_effect = lambda batch: [feature(i + 1) for i in range(len(batch))]
+    service._process_images(images, paths, 'test', dedup_mode=mode)
+    assert len(service.clip.embed_images.call_args.args[0]) == expected
+    assert db.count == expected + 1
+    assert db[original.id].paths == []
+    if mode == 'fast':
+        assert db.get_info(['new'])[0]['paths'] == [paths[1]]
+        service.clip.embed_images.reset_mock()
+        service._process_images(images, paths, 'test', dedup_mode=mode)
+        service.clip.embed_images.assert_not_called()
+
+
+def test_queue_preserves_mixed_dedup_modes(service, tmp_path, monkeypatch):
+    monkeypatch.setattr(cfg, 'BATCH_SIZE', 2)
+    db = service._get_db('test')
+    original = db.model.from_feature(feature(), label='known')
+    db.add_items([original])
+    service.clip = Mock()
+    service.clip.embed_images.return_value = [feature()]
+    data = img2bytes(Image.new('RGB', (2, 2)))
+    assert service.handle_add_images({str(tmp_path / 'known.png'): data}, 'test') == 1
+    assert service.handle_add_images(
+        {str(tmp_path / 'renamed.png'): data}, 'test', update_label=True, dedup_mode='strict',
+    ) == 1
+    entries = [service.image_queue.get_nowait() for _ in range(2)]
+    with patch.object(service.image_queue, 'get', side_effect=[*entries, Empty(), KeyboardInterrupt()]):
+        with pytest.raises(KeyboardInterrupt):
+            service._process_queue()
+    service.clip.embed_images.assert_called_once()
+    assert db.count == 1
+    assert db[original.id].label == 'renamed'
+    assert db[original.id].paths == [str(tmp_path / 'renamed.png')]
+
+
+def test_existing_labels_scope_and_missing_keys(service):
+    db = service._get_db('test')
+    labels = [f'label-{i}' for i in range(12)] + ["it's here"]
+    db.add_items([db.model.from_feature(feature(i), label=label) for i, label in enumerate(labels)])
+    assert service.handle_existing_labels([*labels, 'missing', labels[0]], 'test') == sorted(labels)
+    assert service.handle_existing_labels(labels, 'other') == []
+    assert service.handle_existing_labels([], 'test') == []
+
+
+@pytest.mark.parametrize('mode', ['fast', 'strict'])
+def test_add_cli_forwards_dedup_mode(monkeypatch, mode):
+    monkeypatch.setattr('sys.argv', ['isearch', 'add', '--dedup-mode', mode, '--update-label', '/images'])
+    with patch.object(Client, 'add_images', return_value=0) as add:
+        main()
+    add.assert_called_once_with(['/images'], update_label=True, dedup_mode=mode)
+
+
+def test_add_dedup_mode_defaults_and_validation(service):
+    parser = create_parser()
+    assert parser.parse_args(['add', '/images']).dedup_mode == 'fast'
+    with pytest.raises(SystemExit):
+        parser.parse_args(['add', '--dedup-mode', 'unknown', '/images'])
+    with pytest.raises(ValueError, match='dedup_mode'):
+        Client('test').add_images([], dedup_mode='unknown')
+    with pytest.raises(ValueError, match='dedup_mode'):
+        service.handle_add_images({}, 'test', dedup_mode='unknown')
 
 
 def test_delete_preview_freezes_ids(service, monkeypatch, capsys, tmp_path):

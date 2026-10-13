@@ -56,7 +56,7 @@ class RPCService:
 
         self.databases: dict[str, VectorDB] = {}
         self.database_lock = threading.RLock()
-        self.image_queue: Queue[tuple[str, Image.Image, str, bool]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
+        self.image_queue: Queue[tuple[str, Image.Image, str, bool, str]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
@@ -91,9 +91,25 @@ class RPCService:
             'Model': self.model_key,
         }
 
-    def _process_images(self, images: list[Image.Image], paths: list[str], db_name: str, update_label: bool = False):
+    def _process_images(
+        self, images: list[Image.Image], paths: list[str], db_name: str,
+        update_label: bool = False, dedup_mode: str = 'strict',
+    ):
         """Embed queued images and merge records by vector identity."""
         try:
+            if dedup_mode == 'fast':
+                # Earlier queued batches may have added labels since the client checked.
+                seen = set(self.handle_existing_labels([Path(path).stem for path in paths], db_name))
+                pending = []
+                for image, path in zip(images, paths, strict=True):
+                    label = Path(path).stem
+                    if label not in seen:
+                        pending.append((image, path))
+                        seen.add(label)
+                if not pending:
+                    return
+                images = [image for image, _ in pending]
+                paths = [path for _, path in pending]
             features = self.clip.embed_images(images)
             with self.database_lock:
                 db = self._get_db(db_name)
@@ -104,12 +120,12 @@ class RPCService:
             self.logger.exception('Failed to process image batch')
 
     def _process_queue(self) -> None:
-        """Process queued images in batches grouped by table and label update policy."""
+        """Process queued images in batches grouped by table and import policy."""
         batches = defaultdict(lambda: ([], []))
         while True:
             try:
-                path, image, db_name, update_label = self.image_queue.get(timeout=1)
-                key = (db_name, update_label)
+                path, image, db_name, update_label, dedup_mode = self.image_queue.get(timeout=1)
+                key = (db_name, update_label, dedup_mode)
                 images, paths = batches[key]
                 images.append(image)
                 paths.append(path)
@@ -121,8 +137,18 @@ class RPCService:
                     self._process_images(images, paths, *key)
                 batches.clear()
 
-    def handle_add_images(self, images: dict[str, bytes], db_name: str, update_label: bool = False) -> int:
+    def handle_existing_labels(self, labels: list[str], db_name: str) -> list[str]:
+        """Check a batch of incoming labels before the client reads image files."""
+        with self.database_lock:
+            return sorted(self._get_db(db_name).existing_labels(labels))
+
+    def handle_add_images(
+        self, images: dict[str, bytes], db_name: str,
+        update_label: bool = False, dedup_mode: str = 'fast',
+    ) -> int:
         """Queue image bytes keyed by absolute server-local paths; return accepted count."""
+        if dedup_mode not in {'fast', 'strict'}:
+            raise ValueError('dedup_mode must be fast or strict')
         self._get_db(db_name)  # Reject legacy tables before accepting asynchronous work.
         if any(not isinstance(path, str) or not Path(path).is_absolute() for path in images):
             raise ValueError('Image paths must be absolute server-local paths')
@@ -130,7 +156,7 @@ class RPCService:
         for path, image_bytes in images.items():
             try:
                 image = bytes2img(image_bytes)
-                self.image_queue.put((path, image, db_name, update_label), timeout=5)
+                self.image_queue.put((path, image, db_name, update_label, dedup_mode), timeout=5)
                 queued_count += 1
             except (Full, OSError, ValueError):
                 self.logger.exception('Failed to queue image %s', path)

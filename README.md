@@ -122,18 +122,23 @@ isearch service remove
 
 ### 2. Add Images to Index
 
-The `add` command indexes images in the specified database. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively. Every image is embedded; identical vector IDs merge their paths. Labels are filenames without extensions and may repeat.
+The `add` command indexes images in the specified database. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively. The default `--dedup-mode fast` skips filenames whose stem matches an existing label before reading or embedding them. `--dedup-mode strict` embeds every image and merges paths by vector ID, allowing repeated labels.
 
 ```shell
 # Add single files or folders to the default database
 isearch add ./images/photo1.jpg ./pictures/
 
+# Embed all images and merge paths by vector ID
+isearch add --dedup-mode strict ./images/
+
 # Update labels of existing vector IDs from incoming filenames
-isearch add --update-label ./images/
+isearch add --dedup-mode strict --update-label ./images/
 
 # Specify database and binding
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
+
+Fast mode compares against current labels in the selected table, not filenames from every stored path. Repeated labels in queued batches are also filtered before embedding. Skipped images do not add paths or update labels; use strict mode for different images with the same stem, replaced files, or merging new paths. `--update-label` applies only to images that reach embedding. Both modes ultimately merge by vector ID. The reported count is images accepted into the queue, not rows written. Restart the service after updating so both client and server support the label check.
 
 The `add` command extracts feature vectors using TinyCLIP (512 or 1024 dimensions, depending on the model) and stores them in a local LanceDB table. Small databases use exact cosine search; an IVF-HNSW index is created at 10,000 items. Storage and indices are optimized after every 20 data modifications.
 
@@ -264,7 +269,7 @@ cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
 
 # Submit images (returns accepted queue count, not new record count)
 image_paths = ['./img1.jpg', './img2.png', './folder/']
-n_added = cli.add_images(image_paths, update_label=False)
+n_added = cli.add_images(image_paths, update_label=False, dedup_mode='fast')
 print(f'Submitted {n_added} images for processing')
 
 # Search by image (returns id/label/paths/score records or None)
@@ -450,18 +455,23 @@ isearch service remove
 
 ### 2. 添加图片到索引
 
-`add` 命令用于将图片添加到指定数据库。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归扫描，每张图片计算向量后按向量 ID 去重并合并路径。label 固定为无扩展名文件名，允许重名。
+`add` 命令用于将图片添加到指定数据库。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归扫描，默认 `--dedup-mode fast` 在读取图片和计算向量前，按文件名 stem 查询已有 label 并跳过。`--dedup-mode strict` 对所有图片计算向量，再按向量 ID 去重并合并路径，允许 label 重名。
 
 ```shell
 # 添加单个文件或文件夹到默认数据库
 isearch add ./images/photo1.jpg ./pictures/
 
+# 对所有图片计算向量，按向量 ID 合并路径
+isearch add --dedup-mode strict ./images/
+
 # 对已有向量 ID，使用本次文件名更新 label（默认保留原 label）
-isearch add --update-label ./images/
+isearch add --dedup-mode strict --update-label ./images/
 
 # 指定数据库和绑定
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
+
+fast 模式只检查所选表当前的 label，不检查所有已存路径的文件名；队列中重复的 label 也会在向量化前过滤。跳过的图片不会合并路径或更新 label；同名不同图、原文件被替换、需要合并新路径时请使用 strict。`--update-label` 只作用于实际进入向量处理的图片。两种模式最终都按向量 ID 合并，输出数量为接受入队的图片数，不是成功写入的记录数。更新后需重启服务，让客户端和服务端都支持 label 检查。
 
 `add` 命令通过 TinyCLIP 提取图片特征（按模型为 512 或 1024 维），并存储在本地 LanceDB 表中。小库使用精确 cosine 搜索，达到 10,000 条时自动创建 IVF-HNSW 索引，每 20 次数据修改执行存储和索引优化。
 
@@ -593,7 +603,7 @@ cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
 
 # 提交图片（返回接受处理的数量，不是新增记录数）
 image_paths = ['./img1.jpg', './img2.png', './folder/']
-n_added = cli.add_images(image_paths, update_label=False)
+n_added = cli.add_images(image_paths, update_label=False, dedup_mode='fast')
 print(f'已提交 {n_added} 张图片进行处理')
 
 # 以图搜图（返回包含 id、label、paths、score 的记录列表或 None）
@@ -659,7 +669,7 @@ isearch service start -m NEW_MODEL_KEY
 
 The work directory is one LanceDB database: `~/.isearch/default.lance`, `~/.isearch/albumd.lance`, etc. The CLI keeps `db` and `-d` to select a named image table. `ImageModel` in `imgsearch.models` defines `id: str`, `label: str`, `paths: list[str]` (default `[]`), and `vector: Vector(dim)` (float32). IDs are xxHash64 hex digests of the stored little-endian float32 vector bytes. `Clip.embed_images()`, `embed_image()`, and `embed_text()` return NumPy vectors; search RPC returns plain `id/label/paths/score` dictionaries without vectors.
 
-新增时按 ID 合并 paths，不检查旧路径、不从其他 ID 转移路径。默认保留原 label，`--update-label` 才会更新它。向量按字节判同，不是文件哈希或相似图去重；设备、模型和推理批次造成的浮点差异可能产生不同 ID。同一表请继续使用相同模型。
+导入默认先按 label 跳过（`--dedup-mode fast`），strict 模式不按 label 跳过。实际新增时按 ID 合并 paths，不检查旧路径、不从其他 ID 转移路径。默认保留原 label，`--update-label` 才会更新它。向量按字节判同，不是文件哈希或相似图去重；设备、模型和推理批次造成的浮点差异可能产生不同 ID。同一表请继续使用相同模型。
 
 LanceDB commits writes immediately. Information reports each table's row count and disk bytes, including retained versions. There is no fixed capacity or `--rebuild`. Use one writing service per root. Prune runs synchronously and blocks storage operations while repairing the selected table; it does not re-embed valid paths belonging to only one ID.
 
