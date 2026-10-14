@@ -21,10 +21,18 @@ from imgsearch.models import ImageInfo, ImageModel, SearchResult, as_feature, im
 class VectorDB:
     """CRUD and index maintenance for one table in the shared database directory."""
 
-    def __init__(self, db_name: str = cfg.DB_NAME, base_dir: Path = cfg.BASE_DIR, dim: int = 512) -> None:
+    def __init__(
+        self,
+        db_name: str = cfg.DB_NAME,
+        base_dir: Path = cfg.BASE_DIR,
+        dim: int = 512,
+        *,
+        logger: logging.Logger | None = None,
+    ) -> None:
         """Open or create a named image table and validate its schema."""
         self.model = image_model(dim)
         self.name, self.base, self.dim = db_name, Path(base_dir), dim
+        self.logger = logger or logging.getLogger(__name__)
         self.path = self.table_path(db_name, self.base)
         legacy = self.base / db_name
         if not self.path.exists() and any(
@@ -189,13 +197,17 @@ class VectorDB:
         try:
             indices = list(self.table.list_indices())
             if self.count >= cfg.INDEX_MIN_ROWS and not any(index.columns == ['vector'] for index in indices):
+                self.logger.info('[Index] Building vector index for "%s"...', self.name)
                 self.table.create_index('vector', config=IvfHnswFlat(distance_type='cosine'))
+                self.logger.info('[Index] Vector index ready for "%s"', self.name)
             if self._changes >= 20:
+                self.logger.info('[Storage] Optimizing table "%s"...', self.name)
                 self.table.optimize()
                 self._changes = 0
+                self.logger.info('[Storage] Optimization completed for "%s"', self.name)
         except Exception:
             # The write is committed; maintenance failure must not report data loss.
-            logging.getLogger(__name__).exception('LanceDB maintenance failed; writes remain searchable')
+            self.logger.exception('LanceDB maintenance failed; writes remain searchable')
 
     @classmethod
     def drop(cls, db_name: str, base_dir: Path = cfg.BASE_DIR) -> bool:

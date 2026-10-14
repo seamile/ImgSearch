@@ -1,5 +1,6 @@
 """Exercise model identity and real LanceDB table operations."""
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -166,10 +167,13 @@ def test_root_layout_drop_and_legacy_detection(tmp_path):
 
 
 def test_index_mutations_and_maintenance(db, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=db.logger.name)
     monkeypatch.setattr(cfg, 'INDEX_MIN_ROWS', 256)
     rng = np.random.default_rng(42)
     add(db, [str(i) for i in range(256)], rng.normal(size=(256, 3)))
     assert any(index.columns == ['vector'] for index in db.table.list_indices())
+    assert '[Index] Building vector index for "test"' in caplog.text
+    assert '[Index] Vector index ready for "test"' in caplog.text
     add(db, ['new'], [[1, 0, 0]])
     assert db.search([1, 0, 0], k=1)[0]['label'] == 'new'
     db.delete('new')
@@ -178,8 +182,10 @@ def test_index_mutations_and_maintenance(db, monkeypatch, caplog):
     with patch.object(db.table, 'optimize', side_effect=RuntimeError('maintenance')):
         add(db, ['after'], [[1, 0, 0]])
     assert 'maintenance failed' in caplog.text
+    assert '[Storage] Optimization completed' not in caplog.text
     assert db.search([1, 0, 0], k=1)[0]['label'] == 'after'
     db.clear()
+    assert '[Storage] Optimization completed for "test"' in caplog.text
     assert db.search([1, 0, 0]) == []
 
 

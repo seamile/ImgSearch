@@ -71,11 +71,19 @@ class Client:
         """Encode and submit readable images, returning the accepted queue count."""
         if dedup_mode == 'fast':
             try:
-                labels = set(self.service.handle_existing_labels([Path(path).stem for path in paths], self.db_name))
+                path_labels = [(path, Path(path).stem) for path in paths]
+                labels = set(self.service.handle_existing_labels([label for _, label in path_labels], self.db_name))  # type: ignore
             except Exception as e:
                 ut.print_err(f'Failed to check existing labels: {e}')
                 return 0
-            paths = [path for path in paths if Path(path).stem not in labels]
+            pending = [path for path, label in path_labels if label not in labels]
+            if skipped := len(paths) - len(pending):
+                ut.print_inf(f'Skipped {skipped} images with existing labels in "{self.db_name}"')
+            paths = pending
+        if not paths:
+            return 0
+
+        ut.print_inf(f'Preparing {len(paths)} images for "{self.db_name}"...')
         images = {}
         for path in paths:
             try:
@@ -86,9 +94,23 @@ class Client:
         if not images:
             return 0
         try:
-            return cast(int, self.service.handle_add_images(
-                images, self.db_name, update_label=update_label, dedup_mode=dedup_mode,
-            ))
+            ut.print_inf(f'Submitting {len(images)} images to "{self.db_name}"...')
+            accepted = cast(
+                int,
+                self.service.handle_add_images(
+                    images,
+                    self.db_name,
+                    update_label=update_label,
+                    dedup_mode=dedup_mode,
+                ),
+            )
+            if accepted < len(images):
+                ut.print_warn(
+                    f'Server accepted {accepted}/{len(images)} images; {len(images) - accepted} were not queued'
+                )
+            else:
+                ut.print_inf(f'Queued {accepted} images in "{self.db_name}"')
+            return accepted
         except Exception as e:
             ut.print_err(f'Failed to submit images: {e}')
             return 0
@@ -97,15 +119,23 @@ class Client:
         """Skip stored labels in fast mode, or embed all images in strict mode; return accepted count."""
         if dedup_mode not in {'fast', 'strict'}:
             raise ValueError('dedup_mode must be fast or strict')
+        ut.print_inf(f'Scanning for images to add to "{self.db_name}" (dedup={dedup_mode})...')
         futures, batch = [], []
+        found = 0
         with ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2)) as pool:
             for path in ut.find_all_images(paths):
+                found += 1
+                ut.print_msg(f'Found image #{found}: {path}')
                 batch.append(os.path.abspath(os.path.expanduser(str(path))))
                 if len(batch) >= cfg.BATCH_SIZE:
                     futures.append(pool.submit(self._preprocess_images, batch, update_label, dedup_mode))
                     batch = []
             if batch:
                 futures.append(pool.submit(self._preprocess_images, batch, update_label, dedup_mode))
+            if not found:
+                ut.print_warn('No image files found.')
+            else:
+                ut.print_inf(f'Found {found} image files; waiting for preparation and submission...')
             return sum(future.result() for future in futures)
 
     def search(self, target: str | Image.Image, num: int = 10, similarity: int = 0) -> list[SearchResult] | None:
@@ -162,6 +192,7 @@ class Client:
 
     def prune_db(self) -> dict[str, int]:
         """Prune stale or conflicting image paths and return cleanup statistics."""
+        ut.print_inf(f'Pruning database "{self.db_name or cfg.DB_NAME}"; checking paths and repairing conflicts...')
         return cast(dict[str, int], self.service.handle_prune_db(self.db_name or cfg.DB_NAME))
 
     def delete_images(self, keys: list[str], *, by_id: bool = False) -> bool:
@@ -190,6 +221,7 @@ class Client:
 
     def compare_images(self, path1: str, path2: str) -> float:
         """Handle image comparison request."""
+        ut.print_msg(f'Comparing {path1} and {path2}...')
         try:
             img1 = Image.open(path1)
             ibytes1 = ut.img2bytes(img1, 384)
@@ -358,7 +390,9 @@ def create_parser() -> ArgumentParser:
         '--update-label', action='store_true', help='Update existing image labels from incoming filenames'
     )
     cmd_add.add_argument(
-        '--dedup-mode', choices=['fast', 'strict'], default='fast',
+        '--dedup-mode',
+        choices=['fast', 'strict'],
+        default='fast',
         help='fast: skip existing labels; strict: embed every image and merge by vector ID',
     )
     cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
@@ -406,7 +440,7 @@ def main() -> None:  # ruff: ignore[complex-structure]
     elif args.command == 'add':
         client = Client(db_name=args.db_name, bind=args.bind)
         n_added = client.add_images(args.paths, update_label=args.update_label, dedup_mode=args.dedup_mode)
-        ut.print_inf(f'Submitted {n_added} images for processing')
+        ut.print_inf(f'Submitted {n_added} images for background processing; check the server log for completion')
 
     elif args.command == 'cmp':
         client = Client(bind=args.bind)

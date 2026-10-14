@@ -10,10 +10,10 @@ import pytest
 from PIL import Image
 from Pyro5.serializers import serializers
 
-from imgsearch.client import Client, create_parser, main
 from imgsearch import config as cfg
+from imgsearch.client import Client, create_parser, main
 from imgsearch.server import RPCService
-from imgsearch.utils import bytes2img, img2bytes
+from imgsearch.utils import bytes2img, get_logger, img2bytes
 
 
 @pytest.fixture
@@ -45,6 +45,24 @@ def test_client_rpc_delete_info_unload(service):
     assert service.handle_get_db_info('test') is None
 
 
+def test_maintenance_uses_service_log_file(service, tmp_path):
+    with patch('sys.stderr.isatty', return_value=False):
+        logger = get_logger('storage-file-test', log_dir=tmp_path)
+    service.logger = logger
+    try:
+        db = service._get_db('test')
+        assert db.logger is logger
+        db._changes = 19
+        db._maintain()
+        output = (tmp_path / 'isearch.log').read_text()
+        assert '[Storage] Optimizing table "test"' in output
+        assert '[Storage] Optimization completed for "test"' in output
+    finally:
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+
+
 def test_concurrent_initialization_and_separate_roots(service, tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         tables = list(pool.map(lambda _: service._get_db('test'), range(8)))
@@ -54,7 +72,8 @@ def test_concurrent_initialization_and_separate_roots(service, tmp_path):
     assert other._get_db('test').path != tables[0].path
 
 
-def test_ingestion_update_and_search_wire_payload(service, tmp_path):
+def test_ingestion_update_and_search_wire_payload(service, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger=service.logger.name)
     service.clip = Mock()
     service.clip.embed_images.return_value = [feature()]
     service.clip.embed_text.return_value = feature()
@@ -64,9 +83,13 @@ def test_ingestion_update_and_search_wire_payload(service, tmp_path):
     assert hits[0]['label'] == 'c' and len(hits[0]['paths']) == 3
     assert set(hits[0]) == {'id', 'label', 'paths', 'score'}
     assert serializers['msgpack'].loads(serializers['msgpack'].dumps(hits)) == hits
+    assert '[Add] Computing vectors for 1 images in "test"' in caplog.text
+    assert '[Add] Saving 1 image vectors to "test"' in caplog.text
+    assert '[Add] Completed 1 images in "test": 1 records changed' in caplog.text
+    assert '[Search] Completed in "test": 1 results' in caplog.text
 
 
-def test_client_add_same_names_and_flag(service, tmp_path):
+def test_client_add_same_names_and_flag(service, tmp_path, capsys):
     paths = []
     for folder in ['one', 'two']:
         directory = tmp_path / folder
@@ -80,9 +103,15 @@ def test_client_add_same_names_and_flag(service, tmp_path):
     assert {entry[0] for entry in queued} == set(paths)
     assert all(entry[3] for entry in queued)
     assert all(entry[4] == 'strict' for entry in queued)
+    output = capsys.readouterr()
+    assert output.out == ''
+    assert all(path in output.err for path in paths)
+    assert 'Found 2 image files' in output.err
+    assert 'Preparing 2 images' in output.err
+    assert 'Queued 2 images' in output.err
 
 
-def test_fast_add_skips_existing_label_before_reading(service, tmp_path):
+def test_fast_add_skips_existing_label_before_reading(service, tmp_path, capsys):
     path = tmp_path / "it's here.png"
     Image.new('RGB', (2, 2)).save(path)
     db = service._get_db('test')
@@ -91,6 +120,62 @@ def test_fast_add_skips_existing_label_before_reading(service, tmp_path):
         assert Client('test').add_images([str(path)]) == 0
     opened.assert_not_called()
     assert service.image_queue.empty()
+    output = capsys.readouterr().err
+    assert 'Skipped 1 images with existing labels' in output
+    assert 'Preparing' not in output and 'Queued' not in output
+
+
+def test_add_reports_partial_acceptance(service, tmp_path, capsys, caplog):
+    caplog.set_level(logging.INFO, logger=service.logger.name)
+    image = img2bytes(Image.new('RGB', (2, 2)))
+    assert (
+        service.handle_add_images({str(tmp_path / 'good.png'): image, str(tmp_path / 'bad.png'): b'bad'}, 'test') == 1
+    )
+    assert 'Queued 1/2 images for "test"' in caplog.text
+    assert service.image_queue.qsize() == 1
+
+    paths = [tmp_path / name for name in ('one.png', 'two.png')]
+    for path in paths:
+        Image.new('RGB', (2, 2)).save(path)
+    with (
+        patch.object(Client, 'service', new_callable=PropertyMock, return_value=service),
+        patch.object(service, 'handle_add_images', return_value=1),
+    ):
+        assert Client('test').add_images([str(path) for path in paths], dedup_mode='strict') == 1
+    output = capsys.readouterr().err
+    assert 'Server accepted 1/2 images; 1 were not queued' in output
+    assert 'Queued 2 images' not in output
+
+
+def test_failed_embedding_is_not_reported_as_completed(service, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger=service.logger.name)
+    service.clip = Mock()
+    service.clip.embed_images.side_effect = RuntimeError('inference failed')
+    service._process_images([Image.new('RGB', (2, 2))], [str(tmp_path / 'one.png')], 'test')
+    assert 'Failed to process 1 images in "test"' in caplog.text
+    assert 'inference failed' in caplog.text
+    assert '[Add] Completed' not in caplog.text
+    assert service._get_db('test').count == 0
+
+
+def test_add_empty_directory_reports_no_images(tmp_path, capsys):
+    with patch.object(Client, 'service', new_callable=PropertyMock) as remote:
+        assert Client('test').add_images([str(tmp_path)]) == 0
+    remote.assert_not_called()
+    output = capsys.readouterr()
+    assert 'No image files found' in output.err and output.out == ''
+
+
+def test_prune_reports_progress_and_preserves_empty_records(service, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger=service.logger.name)
+    db = service._get_db('test')
+    row = db.model.from_feature(feature(), label='missing', paths=[str(tmp_path / f'{i}.png') for i in range(1001)])
+    db.add_items([row])
+    stats = service.handle_prune_db('test')
+    assert stats['checked_paths'] == stats['removed_paths'] == 1001
+    assert db[row.id].paths == []
+    assert 'Checked 1000/1001 paths in "test"' in caplog.text
+    assert '[Prune] Completed in "test"' in caplog.text
 
 
 @pytest.mark.parametrize('mode, expected', [('fast', 1), ('strict', 3)])

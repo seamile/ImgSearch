@@ -46,7 +46,7 @@ def bold(text: str) -> str:
 
 def print_msg(msg):
     """Output flash message to stdout"""
-    print(colorize(msg, 'gray'), end='\x1b[K\r', file=sys.stderr)
+    print(colorize(msg, 'gray'), end='\x1b[K\r', file=sys.stderr, flush=True)
 
 
 def print_inf(msg, marked=False):
