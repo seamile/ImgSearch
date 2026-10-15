@@ -40,9 +40,9 @@ your hardware, accuracy needs, and inference speed requirements. Official benchm
   (1.5-3k pairs/s) and higher compute (5-10G MACs). Use for production search with sufficient
   GPU resources where recall is critical.
 
-Database Structure:
-- Each database is a directory under BASE_DIR containing an images.lance table.
-- Small databases use exact cosine search; larger ones use IVF-HNSW.
+Storage Structure:
+- DB_PATH is the LanceDB root directory; each named image table is stored as <table_name>.lance.
+- Small tables use exact cosine search; larger ones use IVF-HNSW.
 """
 
 from pathlib import Path
@@ -70,11 +70,11 @@ DEFAULT_MODEL_KEY = 'ViT-45LY'
 # Batch processing parameters
 BATCH_SIZE = 100  # Images per batch for processing
 
-# Database configuration
-BASE_DIR = Path.home() / '.isearch'  # User home directory for DBs (~/.isearch)
-DB_NAME = 'default'  # Default database name
+# Storage configuration
+DB_PATH = Path.home() / '.isearch'  # LanceDB root directory (~/.isearch)
+TABLE_NAME = 'default'  # Default image table name
 INDEX_MIN_ROWS = 10000  # Build the cosine IVF-HNSW index above this size.
 
 # Service and networking
 SERVICE_NAME = 'isearch.service'  # Pyro5 object ID for service lookup
-UNIX_SOCKET = str((BASE_DIR / 'isearch.sock').resolve())  # Default UDS path for local connections
+UNIX_SOCKET = str((DB_PATH / 'isearch.sock').resolve())  # Default UDS path for local connections

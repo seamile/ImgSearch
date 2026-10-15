@@ -23,42 +23,42 @@ class VectorDB:
 
     def __init__(
         self,
-        db_name: str = cfg.DB_NAME,
-        base_dir: Path = cfg.BASE_DIR,
+        table_name: str = cfg.TABLE_NAME,
+        db_path: Path = cfg.DB_PATH,
         dim: int = 512,
         *,
         logger: logging.Logger | None = None,
     ) -> None:
         """Open or create a named image table and validate its schema."""
         self.model = image_model(dim)
-        self.name, self.base, self.dim = db_name, Path(base_dir), dim
+        self.table_name, self.db_path, self.dim = table_name, Path(db_path), dim
         self.logger = logger or logging.getLogger(__name__)
-        self.path = self.table_path(db_name, self.base)
-        legacy = self.base / db_name
+        self.path = self.table_path(table_name, self.db_path)
+        legacy = self.db_path / table_name
         if not self.path.exists() and any(
             (legacy / name).exists() for name in ('images.lance', 'index.db', 'mapping.db')
         ):
             raise ValueError('Legacy database: migrate explicitly with python -m imgsearch.migrate')
         self.wlock = RLock()
         self._changes = 0
-        self.connection = lancedb.connect(self.base, read_consistency_interval=timedelta(0))
+        self.connection = lancedb.connect(self.db_path, read_consistency_interval=timedelta(0))
         if self.path.exists():
-            self.table = self.connection.open_table(db_name)
+            self.table = self.connection.open_table(table_name)
             if not self.table.schema.equals(self.model.to_arrow_schema(), check_metadata=False):
                 raise ValueError(f'Table schema or vector dimension does not match {dim}; migration may be required')
         else:
-            self.table = self.connection.create_table(db_name, schema=self.model)
+            self.table = self.connection.create_table(table_name, schema=self.model)
             self.table.create_index('label', config=BTree())
             self.table.create_index('id', config=BTree())
 
     @staticmethod
-    def table_path(name: str, base: Path) -> Path:
+    def table_path(table_name: str, db_path: Path) -> Path:
         """Validate a table name and return its resolved path inside the database directory."""
-        if not name or Path(name).name != name or name in {'.', '..'}:
+        if not table_name or Path(table_name).name != table_name or table_name in {'.', '..'}:
             raise ValueError('Table name must be a directory name')
-        path = (Path(base) / f'{name}.lance').resolve()
-        if path.parent != Path(base).resolve():
-            raise ValueError('Table directory must stay inside base_dir')
+        path = (Path(db_path) / f'{table_name}.lance').resolve()
+        if path.parent != Path(db_path).resolve():
+            raise ValueError('Table directory must stay inside db_path')
         return path
 
     def __len__(self) -> int:
@@ -128,8 +128,7 @@ class VectorDB:
         """Return the supplied labels already stored, without loading vectors or paths."""
         with self.wlock:
             rows = (
-                self.table.search().where(self._condition(labels, by_id=False))
-                .select(['label']).limit(None).to_list()
+                self.table.search().where(self._condition(labels, by_id=False)).select(['label']).limit(None).to_list()
             )
             return {row['label'] for row in rows}
 
@@ -197,33 +196,33 @@ class VectorDB:
         try:
             indices = list(self.table.list_indices())
             if self.count >= cfg.INDEX_MIN_ROWS and not any(index.columns == ['vector'] for index in indices):
-                self.logger.info('[Index] Building vector index for "%s"...', self.name)
+                self.logger.info('[Index] Building vector index for "%s"...', self.table_name)
                 self.table.create_index('vector', config=IvfHnswFlat(distance_type='cosine'))
-                self.logger.info('[Index] Vector index ready for "%s"', self.name)
+                self.logger.info('[Index] Vector index ready for "%s"', self.table_name)
             if self._changes >= 20:
-                self.logger.info('[Storage] Optimizing table "%s"...', self.name)
+                self.logger.info('[Storage] Optimizing table "%s"...', self.table_name)
                 self.table.optimize()
                 self._changes = 0
-                self.logger.info('[Storage] Optimization completed for "%s"', self.name)
+                self.logger.info('[Storage] Optimization completed for "%s"', self.table_name)
         except Exception:
             # The write is committed; maintenance failure must not report data loss.
             self.logger.exception('LanceDB maintenance failed; writes remain searchable')
 
     @classmethod
-    def drop(cls, db_name: str, base_dir: Path = cfg.BASE_DIR) -> bool:
+    def drop(cls, table_name: str, db_path: Path = cfg.DB_PATH) -> bool:
         """Drop a named table and return whether it existed."""
-        path = cls.table_path(db_name, base_dir)
+        path = cls.table_path(table_name, db_path)
         if not path.is_dir():
             return False
-        lancedb.connect(base_dir).drop_table(db_name)
+        lancedb.connect(db_path).drop_table(table_name)
         return True
 
     @classmethod
-    def db_list(cls, base_dir: Path = cfg.BASE_DIR) -> list[str]:
+    def list_tables(cls, db_path: Path = cfg.DB_PATH) -> list[str]:
         """Return sorted table names from the database directory."""
-        if not Path(base_dir).exists():
+        if not Path(db_path).exists():
             return []
-        connection = lancedb.connect(base_dir)
+        connection = lancedb.connect(db_path)
         names, token = [], None
         while True:
             page = connection.list_tables(page_token=token, limit=100)

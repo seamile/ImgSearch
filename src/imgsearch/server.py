@@ -23,7 +23,7 @@ from imgsearch.utils import bytes2img, get_logger, img2bytes, print_err, print_w
 
 Pyro5.config.COMPRESSION = True  # type: ignore
 Image.MAX_IMAGE_PIXELS = 100_000_000
-cfg.BASE_DIR.mkdir(parents=True, exist_ok=True)
+cfg.DB_PATH.mkdir(parents=True, exist_ok=True)
 NETLOC = re.compile(r'^(?P<host>[^:]+):(?P<port>\d+)$')
 
 
@@ -39,7 +39,7 @@ class RPCService:
 
     def __init__(
         self,
-        base_dir: Path = cfg.BASE_DIR,
+        db_path: Path = cfg.DB_PATH,
         model_key: str = cfg.DEFAULT_MODEL_KEY,
         logger=None,
     ):
@@ -47,16 +47,16 @@ class RPCService:
         Initialize the RPC service with async processing.
 
         Args:
-            base_dir: Path to the database base directory
+            db_path: Path to the LanceDB root directory
             model_key: Key of the CLIP model to use
             logger: Logger instance (optional, passed from Server)
         """
-        self.base_dir = base_dir
+        self.db_path = db_path
         self.model_key = model_key
         self.logger = logger or get_logger('ImgSearchService', logging.INFO)
 
-        self.databases: dict[str, VectorDB] = {}
-        self.database_lock = threading.RLock()
+        self.tables: dict[str, VectorDB] = {}
+        self.tables_lock = threading.RLock()
         self.image_queue: Queue[tuple[str, Image.Image, str, bool, str]] = Queue(maxsize=cfg.BATCH_SIZE * 3)
         self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
@@ -75,15 +75,15 @@ class RPCService:
         self.logger.info('[Model] Ready: %s on %s', self.model_key, clip.device)
         return clip
 
-    def _get_db(self, db_name: str):
-        """Get database instance"""
-        with self.database_lock:
-            if db_name not in self.databases:
-                self.logger.info('Loading database: %s', db_name)
+    def _get_table(self, table_name: str):
+        """Get the VectorDB instance for a named table"""
+        with self.tables_lock:
+            if table_name not in self.tables:
+                self.logger.info('Loading table: %s', table_name)
                 dim = cfg.MODELS[self.model_key][2]
-                self.databases[db_name] = VectorDB(db_name, self.base_dir, dim, logger=self.logger)
-                self.logger.info('Database ready: %s', db_name)
-            return self.databases[db_name]
+                self.tables[table_name] = VectorDB(table_name, self.db_path, dim, logger=self.logger)
+                self.logger.info('Table ready: %s', table_name)
+            return self.tables[table_name]
 
     def handle_status(self) -> dict:
         """Get service status, including physical memory usage (bytes)"""
@@ -92,27 +92,31 @@ class RPCService:
         return {
             'PID': pid,
             'Memory': mem,
-            'Base': str(self.base_dir),
+            'db_path': str(self.db_path),
             'Model': self.model_key,
         }
 
     def _process_images(
-        self, images: list[Image.Image], paths: list[str], db_name: str,
-        update_label: bool = False, dedup_mode: str = 'strict',
+        self,
+        images: list[Image.Image],
+        paths: list[str],
+        table_name: str,
+        update_label: bool = False,
+        dedup_mode: str = 'strict',
     ):
         """Embed queued images and merge records by vector identity."""
         started = perf_counter()
         self.logger.info(
             '[Add] Processing %s images in "%s" (dedup=%s, update_label=%s)',
             len(images),
-            db_name,
+            table_name,
             dedup_mode,
             update_label,
         )
         try:
             if dedup_mode == 'fast':
                 # Earlier queued batches may have added labels since the client checked.
-                seen = set(self.handle_existing_labels([Path(path).stem for path in paths], db_name))
+                seen = set(self.handle_existing_labels([Path(path).stem for path in paths], table_name))
                 pending = []
                 for image, path in zip(images, paths, strict=True):
                     label = Path(path).stem
@@ -123,30 +127,33 @@ class RPCService:
                     '[Add] Skipped %s/%s images with existing or repeated labels in "%s"',
                     len(images) - len(pending),
                     len(images),
-                    db_name,
+                    table_name,
                 )
                 if not pending:
                     return
                 images = [image for image, _ in pending]
                 paths = [path for _, path in pending]
-            self.logger.info('[Add] Computing vectors for %s images in "%s"...', len(images), db_name)
+            self.logger.info('[Add] Computing vectors for %s images in "%s"...', len(images), table_name)
             features = self.clip.embed_images(images)
-            self.logger.info('[Add] Saving %s image vectors to "%s"...', len(features), db_name)
-            with self.database_lock:
-                db = self._get_db(db_name)
+            self.logger.info('[Add] Saving %s image vectors to "%s"...', len(features), table_name)
+            with self.tables_lock:
+                db = self._get_table(table_name)
                 rows = [db.model.from_path(feature, path) for path, feature in zip(paths, features, strict=True)]
                 changed = db.add_items(rows, update_label=update_label)
             self.logger.info(
                 '[Add] Completed %s images in "%s": %s records changed, %.2fs, %s images waiting in queue',
                 len(images),
-                db_name,
+                table_name,
                 changed,
                 perf_counter() - started,
                 self.image_queue.qsize(),
             )
         except Exception:
             self.logger.exception(
-                '[Add] Failed to process %s images in "%s" after %.2fs', len(images), db_name, perf_counter() - started
+                '[Add] Failed to process %s images in "%s" after %.2fs',
+                len(images),
+                table_name,
+                perf_counter() - started,
             )
 
     def _process_queue(self) -> None:
@@ -154,8 +161,8 @@ class RPCService:
         batches = defaultdict(lambda: ([], []))
         while True:
             try:
-                path, image, db_name, update_label, dedup_mode = self.image_queue.get(timeout=1)
-                key = (db_name, update_label, dedup_mode)
+                path, image, table_name, update_label, dedup_mode = self.image_queue.get(timeout=1)
+                key = (table_name, update_label, dedup_mode)
                 images, paths = batches[key]
                 images.append(image)
                 paths.append(path)
@@ -167,27 +174,30 @@ class RPCService:
                     self._process_images(images, paths, *key)
                 batches.clear()
 
-    def handle_existing_labels(self, labels: list[str], db_name: str) -> list[str]:
+    def handle_existing_labels(self, labels: list[str], table_name: str) -> list[str]:
         """Check a batch of incoming labels before the client reads image files."""
-        with self.database_lock:
-            return sorted(self._get_db(db_name).existing_labels(labels))
+        with self.tables_lock:
+            return sorted(self._get_table(table_name).existing_labels(labels))
 
     def handle_add_images(
-        self, images: dict[str, bytes], db_name: str,
-        update_label: bool = False, dedup_mode: str = 'fast',
+        self,
+        images: dict[str, bytes],
+        table_name: str,
+        update_label: bool = False,
+        dedup_mode: str = 'fast',
     ) -> int:
         """Queue image bytes keyed by absolute server-local paths; return accepted count."""
         if dedup_mode not in {'fast', 'strict'}:
             raise ValueError('dedup_mode must be fast or strict')
-        self._get_db(db_name)  # Reject legacy tables before accepting asynchronous work.
+        self._get_table(table_name)  # Reject legacy tables before accepting asynchronous work.
         if any(not isinstance(path, str) or not Path(path).is_absolute() for path in images):
             raise ValueError('Image paths must be absolute server-local paths')
-        self.logger.info('[Add] Receiving %s images for "%s" (dedup=%s)...', len(images), db_name, dedup_mode)
+        self.logger.info('[Add] Receiving %s images for "%s" (dedup=%s)...', len(images), table_name, dedup_mode)
         queued_count = 0
         for path, image_bytes in images.items():
             try:
                 image = bytes2img(image_bytes)
-                self.image_queue.put((path, image, db_name, update_label, dedup_mode), timeout=5)
+                self.image_queue.put((path, image, table_name, update_label, dedup_mode), timeout=5)
                 queued_count += 1
             except (Full, OSError, ValueError):
                 self.logger.exception('Failed to queue image %s', path)
@@ -195,7 +205,7 @@ class RPCService:
             '[Add] Queued %s/%s images for "%s"; %s images waiting in queue',
             queued_count,
             len(images),
-            db_name,
+            table_name,
             self.image_queue.qsize(),
         )
         return queued_count
@@ -205,7 +215,7 @@ class RPCService:
         query: Any,
         k: int = 10,
         similarity: int = 0,
-        db_name: str = cfg.DB_NAME,
+        table_name: str = cfg.TABLE_NAME,
     ) -> list[SearchResult] | None:
         """
         Search for similar images using image or text query.
@@ -214,7 +224,7 @@ class RPCService:
             query: Text description or image bytes to search for
             k: Number of results to return
             similarity: Minimum similarity threshold (0-100)
-            db_name: Name of the database to search in
+            table_name: Name of the table to search in
 
         Returns:
             Records containing id, label, paths, and similarity score
@@ -228,7 +238,7 @@ class RPCService:
 
         started = perf_counter()
         try:
-            self.logger.info(f'[Search] type={type(query).__name__}, {k=}, {similarity=}, {db_name=}')
+            self.logger.info(f'[Search] type={type(query).__name__}, {k=}, {similarity=}, {table_name=}')
 
             # Handle Pyro5 serialization quirks
             if isinstance(query, str):
@@ -259,12 +269,12 @@ class RPCService:
                 self.logger.error(f'Unsupported query type: {type(query)}, value: {repr(query)[:200]}')
                 return []
 
-            self.logger.info('[Search] Query vector ready; searching "%s"...', db_name)
-            with self.database_lock:
-                db = self._get_db(db_name)
+            self.logger.info('[Search] Query vector ready; searching "%s"...', table_name)
+            with self.tables_lock:
+                db = self._get_table(table_name)
                 results = db.search(feature, k, similarity)
             self.logger.info(
-                '[Search] Completed in "%s": %s results, %.2fs', db_name, len(results), perf_counter() - started
+                '[Search] Completed in "%s": %s results, %.2fs', table_name, len(results), perf_counter() - started
             )
             return results
         except Exception as e:
@@ -273,69 +283,69 @@ class RPCService:
         finally:
             self.search_semaphore.release()
 
-    def handle_list_dbs(self) -> dict[str, bool]:
+    def handle_list_tables(self) -> dict[str, bool]:
         """
-        List all available database names and whether they are loaded.
+        List all available table names and whether they are loaded.
 
         Returns:
-            Dictionary mapping database names to boolean indicating whether they are loaded
+            Dictionary mapping table names to boolean indicating whether they are loaded
         """
         try:
-            dbs = {name: name in self.databases for name in VectorDB.db_list(self.base_dir)}
-            self.logger.debug(f'List dbs: {dbs}')
-            return dbs
+            tables = {name: name in self.tables for name in VectorDB.list_tables(self.db_path)}
+            self.logger.debug(f'List tables: {tables}')
+            return tables
         except Exception as e:
-            self.logger.error(f'Failed to list databases: {e}')
+            self.logger.error(f'Failed to list tables: {e}')
             return {}
 
-    def handle_get_db_info(self, db_name: str) -> dict | None:
+    def handle_get_table_info(self, table_name: str) -> dict | None:
         """
-        Get database information.
+        Get table information.
 
         Args:
-            db_name: Name of the database to get info for
+            table_name: Name of the table to get info for
 
         Returns:
-            Dictionary containing database statistics (base_dir, size, count)
-            Returns None if database not found
+            Dictionary containing table statistics (db_path, size, count)
+            Returns None if table not found
         """
-        with self.database_lock:
-            if db_name not in VectorDB.db_list(self.base_dir):
+        with self.tables_lock:
+            if table_name not in VectorDB.list_tables(self.db_path):
                 return None
 
-            self.logger.debug(f'Get db info: {db_name}')
-            db = self._get_db(db_name)
+            self.logger.debug(f'Get table info: {table_name}')
+            db = self._get_table(table_name)
             return {
-                'base': str(db.base.resolve()),
+                'db_path': str(db.db_path.resolve()),
                 'count': db.count,
                 'size': db.size,
             }
 
-    def handle_unload_dbs(self, *names: str) -> int:
-        """Unload databases to free memory"""
-        with self.database_lock:
-            names = names or tuple(self.databases.keys())
+    def handle_unload_tables(self, *names: str) -> int:
+        """Unload tables to free memory"""
+        with self.tables_lock:
+            names = names or tuple(self.tables.keys())
             count = 0
             for name in names:
-                if name not in self.databases:
+                if name not in self.tables:
                     continue
-                self.databases.pop(name)
+                self.tables.pop(name)
                 count += 1
-                self.logger.info('Unloaded database: %s', name)
+                self.logger.info('Unloaded table: %s', name)
         collect()
         return count
 
-    def handle_get_images(self, keys: list[str], db_name: str, by_id: bool = False) -> list[ImageInfo]:
+    def handle_get_images(self, keys: list[str], table_name: str, by_id: bool = False) -> list[ImageInfo]:
         """Resolve all requested labels or IDs for a deletion preview."""
-        with self.database_lock:
-            if db_name not in VectorDB.db_list(self.base_dir):
-                raise KeyError(f'Table not found: {db_name}')
-            return self._get_db(db_name).get_info(keys, by_id=by_id)
+        with self.tables_lock:
+            if table_name not in VectorDB.list_tables(self.db_path):
+                raise KeyError(f'Table not found: {table_name}')
+            return self._get_table(table_name).get_info(keys, by_id=by_id)
 
-    def handle_prune_db(self, db_name: str = cfg.DB_NAME) -> dict[str, int]:  # ruff: ignore[complex-structure]
+    def handle_prune_table(self, table_name: str = cfg.TABLE_NAME) -> dict[str, int]:  # ruff: ignore[complex-structure]
         """Clean path associations; preserve records even when every path is removed."""
         started = perf_counter()
-        self.logger.info('[Prune] Checking path associations in "%s"...', db_name)
+        self.logger.info('[Prune] Checking path associations in "%s"...', table_name)
         stats = {
             'checked_paths': 0,
             'deduplicated_paths': 0,
@@ -344,10 +354,10 @@ class RPCService:
             'inserted_rows': 0,
             'errors': 0,
         }
-        with self.database_lock:
-            if db_name not in VectorDB.db_list(self.base_dir):
-                raise KeyError(f'Table not found: {db_name}')
-            db = self._get_db(db_name)
+        with self.tables_lock:
+            if table_name not in VectorDB.list_tables(self.db_path):
+                raise KeyError(f'Table not found: {table_name}')
+            db = self._get_table(table_name)
             with db.wlock:
                 paths_by_id, changed, owners = {}, set(), defaultdict(set)
                 for row in db.iter_paths():
@@ -359,12 +369,12 @@ class RPCService:
                     for path in paths:
                         owners[path].add(row['id'])
                 duplicates = {}
-                self.logger.info('[Prune] Checking %s distinct paths in "%s"...', len(owners), db_name)
+                self.logger.info('[Prune] Checking %s distinct paths in "%s"...', len(owners), table_name)
                 for path, ids in owners.items():
                     stats['checked_paths'] += 1
                     if stats['checked_paths'] % 1000 == 0:
                         self.logger.info(
-                            '[Prune] Checked %s/%s paths in "%s"', stats['checked_paths'], len(owners), db_name
+                            '[Prune] Checked %s/%s paths in "%s"', stats['checked_paths'], len(owners), table_name
                         )
                     try:
                         valid = stat.S_ISREG(Path(path).stat().st_mode)
@@ -388,7 +398,7 @@ class RPCService:
                     '[Prune] Updating %s records and repairing %s conflicting paths in "%s"...',
                     len(changed),
                     len(duplicates),
-                    db_name,
+                    table_name,
                 )
                 for offset in range(0, len(changed), 500):
                     records = db.get_items(changed[offset : offset + 500])
@@ -396,7 +406,7 @@ class RPCService:
 
                 for index, (path, ids) in enumerate(duplicates.items(), 1):
                     if index == 1 or index % 100 == 0:
-                        self.logger.info('[Prune] Repairing path %s/%s in "%s"', index, len(duplicates), db_name)
+                        self.logger.info('[Prune] Repairing path %s/%s in "%s"', index, len(duplicates), table_name)
                     self.logger.debug('[Prune] Recomputing vector for %s', path)
                     try:
                         # Match the pixels sent by add, including its lossy WebP conversion.
@@ -423,63 +433,63 @@ class RPCService:
                     except Exception:
                         stats['errors'] += 1
                         self.logger.exception('Cannot repair path %s; preserving associations', path)
-        self.logger.info('[Prune] Completed in "%s" after %.2fs: %s', db_name, perf_counter() - started, stats)
+        self.logger.info('[Prune] Completed in "%s" after %.2fs: %s', table_name, perf_counter() - started, stats)
         return stats
 
-    def handle_delete_images(self, keys: list[str], db_name: str, by_id: bool = False):
-        """Delete images from the specified database."""
-        self.logger.warning(f'[Delete] Delete {len(keys)} images from {db_name}')
+    def handle_delete_images(self, keys: list[str], table_name: str, by_id: bool = False):
+        """Delete images from the specified table."""
+        self.logger.warning(f'[Delete] Delete {len(keys)} images from {table_name}')
         try:
-            with self.database_lock:
-                db = self._get_db(db_name)
+            with self.tables_lock:
+                db = self._get_table(table_name)
                 db.delete(*keys, by_id=by_id)
-            self.logger.info('[Delete] Completed in "%s": %s keys', db_name, len(keys))
+            self.logger.info('[Delete] Completed in "%s": %s keys', table_name, len(keys))
             return True
         except Exception as e:
             self.logger.error(f'Failed to delete images: {e}')
             return False
 
-    def handle_clear_db(self, db_name: str) -> bool:
+    def handle_clear_table(self, table_name: str) -> bool:
         """
-        Clear all images from the specified database.
+        Clear all images from the specified table.
 
         Args:
-            db_name: Name of the database to clear
+            table_name: Name of the table to clear
 
         Returns:
             True if successful, False otherwise
         """
-        self.logger.warning(f'[Clear] Clear database: {db_name}')
+        self.logger.warning(f'[Clear] Clear table: {table_name}')
         try:
-            with self.database_lock:
-                db = self._get_db(db_name)
+            with self.tables_lock:
+                db = self._get_table(table_name)
                 db.clear()
-            self.logger.info('Database %s cleared', db_name)
+            self.logger.info('Table %s cleared', table_name)
             return True
         except Exception as e:
-            self.logger.error(f'Failed to clear database: {e}')
+            self.logger.error(f'Failed to clear table: {e}')
             return False
 
-    def handle_drop_db(self, db_name: str) -> bool:
+    def handle_drop_table(self, table_name: str) -> bool:
         """
-        Drop the specified database.
+        Drop the specified table.
 
         Args:
-            db_name: Name of the database to drop
+            table_name: Name of the table to drop
 
         Returns:
             True if successful, False otherwise
         """
-        self.logger.warning(f'[Drop] Drop database: {db_name}')
+        self.logger.warning(f'[Drop] Drop table: {table_name}')
         try:
-            with self.database_lock:
-                if db_name in self.databases:
-                    del self.databases[db_name]
-                dropped = VectorDB.drop(db_name, self.base_dir)
-            self.logger.info('[Drop] Database "%s": %s', db_name, 'dropped' if dropped else 'not found')
+            with self.tables_lock:
+                if table_name in self.tables:
+                    del self.tables[table_name]
+                dropped = VectorDB.drop(table_name, self.db_path)
+            self.logger.info('[Drop] Table "%s": %s', table_name, 'dropped' if dropped else 'not found')
             return dropped
         except Exception as e:
-            self.logger.error(f'Failed to drop database: {e}')
+            self.logger.error(f'Failed to drop table: {e}')
             return False
 
     def handle_compare_images(self, ibytes1: bytes, ibytes2: bytes) -> float:
@@ -522,23 +532,23 @@ class Server:
 
     def __init__(
         self,
-        base_dir: Path = cfg.BASE_DIR,
+        db_path: Path = cfg.DB_PATH,
         model_key: str = cfg.DEFAULT_MODEL_KEY,
         bind: str = cfg.UNIX_SOCKET,
         log_level: str = 'info',
     ):
         """Initialize the RPC service, logging, and server lifecycle state."""
         self._shutdown = threading.Event()
-        self.base_dir = base_dir
+        self.db_path = db_path
         self.model_key = model_key
         self.bind = bind
-        self.pid_file = self.base_dir / 'isearch.pid'
+        self.pid_file = self.db_path / 'isearch.pid'
 
         # Setup logger
         self.logger = get_logger('ImgSearchService', level=get_log_level(log_level))
 
         # Create service
-        self.service = RPCService(base_dir=self.base_dir, model_key=self.model_key, logger=self.logger)
+        self.service = RPCService(db_path=self.db_path, model_key=self.model_key, logger=self.logger)
         self.daemon: Pyro5.server.Daemon | None = None
 
     def create_daemon(self):
@@ -621,7 +631,7 @@ class Server:
             # Log service info
             self.logger.info(f'Listening : {self.bind}')
             self.logger.debug(f'Serializer: {Pyro5.config.SERIALIZER}')
-            self.logger.info(f'Base dir  : {self.base_dir}')
+            self.logger.info(f'DB path   : {self.db_path}')
             self.logger.info(f'iSearch service started ({pid=})')
 
             self.daemon.requestLoop(lambda: not self._shutdown.is_set())
@@ -674,10 +684,10 @@ class Server:
             except Exception as e:
                 self.logger.error(f'Failed to shutdown daemon: {e}')
 
-        # LanceDB commits writes immediately; release cached database handles.
+        # LanceDB commits writes immediately; release cached table handles.
         if isinstance(self.service, RPCService):
-            with self.service.database_lock:
-                self.service.databases.clear()
+            with self.service.tables_lock:
+                self.service.tables.clear()
 
         # Cleanup socket
         if isinstance(self.bind, str):

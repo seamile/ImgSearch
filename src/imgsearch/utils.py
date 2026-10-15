@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from imgsearch.config import BASE_DIR
+from imgsearch.config import DB_PATH
 
 EXTENSIONS = Image.registered_extensions().keys()
 
@@ -136,7 +136,7 @@ class ColorFormatter(logging.Formatter):
         return self.colorize(record.levelname, message)
 
 
-def get_logger(name: str, level: int = logging.INFO, log_dir=BASE_DIR):
+def get_logger(name: str, level: int = logging.INFO, log_dir=DB_PATH):
     """Setup logging based on TTY status"""
     logger = logging.getLogger(name)
     logger.setLevel(level)

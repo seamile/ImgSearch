@@ -35,7 +35,7 @@ class SearchResult(ImageInfo):
 
 
 def search_result(row: dict) -> SearchResult:
-    """Convert a database search row into image metadata with a similarity score."""
+    """Convert a table search row into image metadata with a similarity score."""
     return SearchResult(
         id=row['id'],
         label=row['label'],

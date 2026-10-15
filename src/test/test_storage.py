@@ -35,7 +35,7 @@ def test_dimensions_identity_and_persistence(tmp_path, dim):
     assert reopened[row.id] == row
     assert np.asarray(reopened[row.id].vector, dtype='<f4').tobytes() == vector.tobytes()
     hit = reopened.search(vector)[0]
-    assert hit == {'id': row.id, 'label': 'image', 'paths': [str(tmp_path / 'image.jpg')], 'score': 100.}
+    assert hit == {'id': row.id, 'label': 'image', 'paths': [str(tmp_path / 'image.jpg')], 'score': 100.0}
     with pytest.raises(ValueError, match='dimension'):
         VectorDB('test', tmp_path, dim + 1)
 
@@ -79,7 +79,7 @@ def test_model_validation_and_canonical_bytes():
         model.from_feature(a.vector, label='a', paths=[''])
 
 
-@pytest.mark.parametrize('feature', [[1., 0.], [0., 0., 0.], [float('nan'), 0., 1.], [float('inf'), 0., 1.]])
+@pytest.mark.parametrize('feature', [[1.0, 0.0], [0.0, 0.0, 0.0], [float('nan'), 0.0, 1.0], [float('inf'), 0.0, 1.0]])
 def test_invalid_vectors_do_not_write(db, feature):
     with pytest.raises(ValueError):
         add(db, ['valid', 'bad'], [[1, 0, 0], feature])
@@ -121,11 +121,18 @@ def test_deletion_and_sql_escaping(db):
 
 
 def test_cosine_and_validation(db):
-    add(db, ['same', 'angled', 'orthogonal', 'opposite'], [
-        [3., 0., 0.], [0.7996, (1 - 0.7996**2)**0.5, 0.], [0., 1., 0.], [-1., 0., 0.],
-    ])
-    hits = db.search(np.array([2., 0., 0.]), k=20)
-    assert [(hit['label'], hit['score']) for hit in hits] == [('same', 100.), ('angled', 80.), ('orthogonal', 0.)]
+    add(
+        db,
+        ['same', 'angled', 'orthogonal', 'opposite'],
+        [
+            [3.0, 0.0, 0.0],
+            [0.7996, (1 - 0.7996**2) ** 0.5, 0.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ],
+    )
+    hits = db.search(np.array([2.0, 0.0, 0.0]), k=20)
+    assert [(hit['label'], hit['score']) for hit in hits] == [('same', 100.0), ('angled', 80.0), ('orthogonal', 0.0)]
     assert len(db.search([1, 0, 0], similarity=80)) == 2
     assert db.search([]) == []
     for similarity in [-1, 101, float('nan')]:
@@ -137,10 +144,10 @@ def test_cosine_and_validation(db):
 
 
 def test_root_layout_drop_and_legacy_detection(tmp_path):
-    assert VectorDB.db_list(tmp_path / 'missing') == []
+    assert VectorDB.list_tables(tmp_path / 'missing') == []
     a = VectorDB('a', tmp_path)
     b = VectorDB('b', tmp_path)
-    assert VectorDB.db_list(tmp_path) == ['a', 'b']
+    assert VectorDB.list_tables(tmp_path) == ['a', 'b']
     (tmp_path / 'service.log').write_text('keep')
     a.clear()
     assert VectorDB.drop('a', tmp_path)
@@ -160,7 +167,7 @@ def test_root_layout_drop_and_legacy_detection(tmp_path):
     outside = tmp_path.parent / (tmp_path.name + '-outside')
     outside.mkdir()
     (tmp_path / 'link.lance').symlink_to(outside, target_is_directory=True)
-    with pytest.raises(ValueError, match='inside base_dir'):
+    with pytest.raises(ValueError, match='inside db_path'):
         VectorDB('link', tmp_path)
     with pytest.raises(ValueError):
         VectorDB('bad', tmp_path, dim=0)
@@ -197,9 +204,15 @@ def test_ann_recall_against_exact_cosine(tmp_path):
     queries /= np.linalg.norm(queries, axis=1, keepdims=True)
     db = VectorDB('ann', tmp_path, dim=32)
     add(db, [str(i) for i in range(len(vectors))], vectors)
-    db.table.create_index('vector', config=IvfHnswFlat(
-        distance_type='cosine', num_partitions=1, m=8, ef_construction=64,
-    ))
+    db.table.create_index(
+        'vector',
+        config=IvfHnswFlat(
+            distance_type='cosine',
+            num_partitions=1,
+            m=8,
+            ef_construction=64,
+        ),
+    )
     recalls = []
     for query in queries:
         expected = set(np.argpartition(-(vectors @ query), 9)[:10])
@@ -215,6 +228,7 @@ def test_concurrent_merges_keep_all_paths(db, tmp_path):
         db.add_items([row])
         assert db.search([1, 0, 0])
         return row.id
+
     with ThreadPoolExecutor(max_workers=4) as pool:
         ids = list(pool.map(operation, range(12)))
     assert len(set(ids)) == db.count == 1
@@ -224,6 +238,7 @@ def test_concurrent_merges_keep_all_paths(db, tmp_path):
 def test_table_listing_pagination(tmp_path):
     from types import SimpleNamespace
     from unittest.mock import Mock
+
     connection = Mock()
     next_page = 'next'
     connection.list_tables.side_effect = [
@@ -231,5 +246,5 @@ def test_table_listing_pagination(tmp_path):
         SimpleNamespace(tables=['a'], page_token=None),
     ]
     with patch('imgsearch.storage.lancedb.connect', return_value=connection):
-        assert VectorDB.db_list(tmp_path) == ['a', 'b']
+        assert VectorDB.list_tables(tmp_path) == ['a', 'b']
     connection.list_tables.assert_called_with(page_token=next_page, limit=100)

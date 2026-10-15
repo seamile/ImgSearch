@@ -15,16 +15,16 @@ Wants=network.target
 [Service]
 User={username}
 Group={usergroup}
-WorkingDirectory={base_dir}
+WorkingDirectory={db_path}
 Environment=PATH={py_bin}:/usr/local/bin:/usr/bin:/bin
-ExecStart={py_bin}/isearch service start -b {base_dir} -m {model_key} -B {bind} -L {log_level}
+ExecStart={py_bin}/isearch service start -d {db_path} -m {model_key} -B {bind} -L {log_level}
 Restart=on-failure
 TimeoutStopSec=10s
 SyslogIdentifier=isearch
 OOMScoreAdjust=-500
 MemoryMax=2560M
 ProtectSystem=strict
-ReadWritePaths={base_dir}
+ReadWritePaths={db_path}
 TemporaryFileSystem=/tmp:noexec
 
 [Install]
@@ -44,8 +44,8 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
       <string>{py_bin}/isearch</string>
       <string>service</string>
       <string>start</string>
-      <string>-b</string>
-      <string>{base_dir}</string>
+      <string>-d</string>
+      <string>{db_path}</string>
       <string>-m</string>
       <string>{model_key}</string>
       <string>-B</string>
@@ -55,7 +55,7 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>{base_dir}</string>
+    <string>{db_path}</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -73,10 +73,10 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
     </dict>
 
     <key>StandardOutPath</key>
-    <string>{base_dir}/isearch.log</string>
+    <string>{db_path}/isearch.log</string>
 
     <key>StandardErrorPath</key>
-    <string>{base_dir}/isearch.log</string>
+    <string>{db_path}/isearch.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>
@@ -88,10 +88,10 @@ LAUNCHD_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def get_env_variables(base_dir: str, model_key: str, bind: str, log_level: str, service_name: str):
+def get_env_variables(db_path: str, model_key: str, bind: str, log_level: str, service_name: str):
     """Generate service config content for the current platform."""
     return {
-        'base_dir': base_dir,
+        'db_path': db_path,
         'model_key': model_key,
         'bind': bind,
         'log_level': log_level,
@@ -105,7 +105,7 @@ def get_env_variables(base_dir: str, model_key: str, bind: str, log_level: str, 
 def setup_systemd_service(env_vars: dict[str, str]):
     """Setup systemd service for Linux."""
     # Escape spaces in paths
-    env_vars['base_dir'] = env_vars['base_dir'].replace(' ', '\\ ')
+    env_vars['db_path'] = env_vars['db_path'].replace(' ', '\\ ')
     env_vars['py_bin'] = env_vars['py_bin'].replace(' ', '\\ ')
 
     # Create service config file
@@ -137,20 +137,20 @@ def setup_launchd_service(env_vars: dict[str, str]):
 
 
 def setup_service(
-    base_dir: str | Path = cfg.BASE_DIR,
+    db_path: str | Path = cfg.DB_PATH,
     model_key: str = cfg.DEFAULT_MODEL_KEY,
     bind: str = cfg.UNIX_SOCKET,
     log_level: str = 'info',
     service_name=cfg.SERVICE_NAME,
 ) -> bool:
     """Install service on the current platform."""
-    base_dir = Path(base_dir).resolve()
-    if not base_dir.exists():
-        base_dir.mkdir(parents=True, exist_ok=True)
-    if not base_dir.is_dir():
-        raise NotADirectoryError(f'Base directory {base_dir} does not exist.')
+    db_path = Path(db_path).resolve()
+    if not db_path.exists():
+        db_path.mkdir(parents=True, exist_ok=True)
+    if not db_path.is_dir():
+        raise NotADirectoryError(f'Database directory {db_path} does not exist.')
 
-    env_vars = get_env_variables(str(base_dir), model_key, bind, log_level, service_name)
+    env_vars = get_env_variables(str(db_path), model_key, bind, log_level, service_name)
 
     if sys.platform == 'linux':
         setup_systemd_service(env_vars)

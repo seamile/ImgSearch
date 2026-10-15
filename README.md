@@ -73,7 +73,7 @@ isearch service start
 ###### Optional parameters for start command
 
 - `-B BIND`: Server binding, either `UDS` path or `IP:PORT` (e.g., `-B /path/to/isearch.sock` or `-B 127.0.0.1:5000`)
-- `-b BASE_DIR`: Index database directory (default: `~/.isearch/`)
+- `-d DB_PATH`: LanceDB root directory (default: `~/.isearch/`)
 - `-m MODEL_KEY`: Model name (see [Model Selection Guide](#model-selection-guide))
 - `-L LOG_LEVEL`: Log level (`debug`, `info`, `warning`, `error`, `critical`; default: `info`)
 
@@ -94,7 +94,7 @@ Example output:
 iSearch service is running
  - PID  : 86269
  - MEM  : 1301.6 MB
- - Base : /home/seamile/.isearch
+ - Dataase : /home/seamile/.isearch
  - Model: ViT-45LY
 ```
 
@@ -122,10 +122,10 @@ isearch service remove
 
 ### 2. Add Images to Index
 
-The `add` command indexes images in the specified database. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively. The default `--dedup-mode fast` skips filenames whose stem matches an existing label before reading or embedding them. `--dedup-mode strict` embeds every image and merges paths by vector ID, allowing repeated labels.
+The `add` command indexes images in the specified table. It supports formats like jpg, jpeg, png, bmp, and webp. Folders are scanned recursively. The default `--dedup-mode fast` skips filenames whose stem matches an existing label before reading or embedding them. `--dedup-mode strict` embeds every image and merges paths by vector ID, allowing repeated labels.
 
 ```shell
-# Add single files or folders to the default database
+# Add single files or folders to the default table
 isearch add ./images/photo1.jpg ./pictures/
 
 # Embed all images and merge paths by vector ID
@@ -134,13 +134,13 @@ isearch add --dedup-mode strict ./images/
 # Update labels of existing vector IDs from incoming filenames
 isearch add --dedup-mode strict --update-label ./images/
 
-# Specify database and binding
+# Specify table and binding
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
 Fast mode compares against current labels in the selected table, not filenames from every stored path. Repeated labels in queued batches are also filtered before embedding. Skipped images do not add paths or update labels; use strict mode for different images with the same stem, replaced files, or merging new paths. `--update-label` applies only to images that reach embedding. Both modes ultimately merge by vector ID. The reported count is images accepted into the queue, not rows written. Restart the service after updating so both client and server support the label check.
 
-The `add` command extracts feature vectors using TinyCLIP (512 or 1024 dimensions, depending on the model) and stores them in a local LanceDB table. Small databases use exact cosine search; an IVF-HNSW index is created at 10,000 items. Storage and indices are optimized after every 20 data modifications.
+The `add` command extracts feature vectors using TinyCLIP (512 or 1024 dimensions, depending on the model) and stores them in a local LanceDB table. Small tables use exact cosine search; an IVF-HNSW index is created at 10,000 items. Storage and indices are optimized after every 20 data modifications.
 
 ### 3. Search Images
 
@@ -182,32 +182,32 @@ b681d3e48ac00c09	img1	92.3%	['/path/to/img1.jpg']
 1dff079456ec80b0	img2	85.1%	['/path/to/img2.png']
 ```
 
-### 4. Database Management
+### 4. Table Management
 
-#### List All Databases
+#### List All Tables
 
 ```shell
-isearch db -l
+isearch table -l
 ```
 
 Output:
 ```
-Available databases:
+Available tables:
 * default (loaded)
 * gallery
-* test_db
+* test_table
 ```
 
-#### View Database Info
+#### View Table Info
 
 ```shell
-isearch db -i my_db
+isearch table -i my_table
 ```
 
 Example output:
 ```
-Database "my_db"
- - Base: /home/seamile/.isearch
+Table "my_table"
+ - DbPath: /home/seamile/.isearch
  - Count: 141610
  - Size: 313.9 MB
 ```
@@ -215,8 +215,8 @@ Database "my_db"
 #### Delete Specific Data
 
 ```shell
-isearch db my_db --delete img1 img2
-isearch db my_db --delete-id b681d3e48ac00c09
+isearch table my_table --delete img1 img2
+isearch table my_table --delete-id b681d3e48ac00c09
 ```
 
 Both deletion modes show all matching IDs, labels, and paths for confirmation. Label deletion includes every matching record.
@@ -224,27 +224,27 @@ Both deletion modes show all matching IDs, labels, and paths for confirmation. L
 #### Repair Paths
 
 ```shell
-isearch db --prune          # default table only
-isearch db --prune my_db
+isearch table --prune          # default table only
+isearch table --prune my_table
 ```
 
 Prune removes missing paths and duplicates within a record. Paths shared by different IDs are re-embedded using the add preprocessing pipeline and associated with the matching ID, creating it if needed. Other paths and records with empty paths are retained. Failed reads/inference preserve the affected associations. Mount all relevant disks first; paths belong to the server filesystem.
 
-#### Clear Database
+#### Clear Table
 
 ```shell
 # Confirm then clear
-isearch db --clear my_db
+isearch table --clear my_table
 ```
 
-#### Drop Database
+#### Drop Table
 
 ```shell
 # Confirm then drop
-isearch db --drop my_db
+isearch table --drop my_table
 ```
 
-**⚠️ Warning**: All delete operations are irreversible. `--clear` deletes all data in the database, `--drop` deletes only the selected table.
+**⚠️ Warning**: All delete operations are irreversible. `--clear` deletes all records in the selected table, `--drop` deletes only the selected table.
 
 ### 5. Compare Two Images
 
@@ -265,7 +265,7 @@ ImgSearch can be used as a Python module in other projects.
 from imgsearch.client import Client
 
 # Create client (connects to local service by default)
-cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
+cli = Client(table_name='default', bind='~/.isearch/isearch.sock')
 
 # Submit images (returns accepted queue count, not new record count)
 image_paths = ['./img1.jpg', './img2.png', './folder/']
@@ -289,15 +289,15 @@ for row in results or []:
 similarity = cli.compare_images('./img1.jpg', './img2.jpg')
 print(f'Similarity: {similarity}%')
 
-# Database operations
-dbs = cli.list_dbs()
-print(f'Available databases: {dbs}')
+# Table operations
+tables = cli.list_tables()
+print(f'Available tables: {tables}')
 
-info = cli.get_db_info()
-print(f'Database information: {info}')
+info = cli.get_table_info()
+print(f'Table information: {info}')
 
-# Clear database (returns True/False)
-cleared = cli.clear_db()
+# Clear table (returns True/False)
+cleared = cli.clear_table()
 print(f'Clear success: {cleared}')
 ```
 
@@ -345,7 +345,7 @@ ImgSearch 是一款反向图片搜索引擎，支持以图搜图和文字描述�
 - [x] 文字搜图：通过自然语言描述搜索相关图片
 - [x] 图像相似度比较：计算两张图片的相似度分数（0-100%）
 - [x] 批量添加图片：支持单个文件或文件夹（递归添加），自动跳过重复
-- [x] 多数据库支持：可创建和管理多个独立图片库
+- [x] 多表支持：可创建和管理多个独立图片库
 - [x] 相似度阈值过滤：搜索结果可设置最小相似度（如 ≥80%）
 
 ## 安装
@@ -408,7 +408,7 @@ isearch service start
 ###### start 命令可选参数
 
 - `-B BIND`:       服务端绑定方式，可选 `UDS` 或 `IP:PORT` 两种格式。如：`-B /path/to/isearch.sock` 或 `-B 127.0.0.1:5000`
-- `-b BASE_DIR`:   索引数据库目录，默认为 `~/.isearch/`
+- `-d DB_PATH`:   LanceDB 数据库根目录，默认为 `~/.isearch/`
 - `-m MODEL_KEY`:  模型名称，可选项详见 [模型选择指南](#模型选择指南)
 - `-L LOG_LEVEL`:  日志级别，可选 `debug`、`info`、`warning`、`error`、`critical`。
 
@@ -427,7 +427,7 @@ isearch service status
 iSearch service is running
  - PID  : 86269
  - MEM  : 1301.6 MB
- - Base : /home/seamile/.isearch
+ - DB path : /home/seamile/.isearch
  - Model: ViT-45LY
 ```
 
@@ -455,10 +455,10 @@ isearch service remove
 
 ### 2. 添加图片到索引
 
-`add` 命令用于将图片添加到指定数据库。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归扫描，默认 `--dedup-mode fast` 在读取图片和计算向量前，按文件名 stem 查询已有 label 并跳过。`--dedup-mode strict` 对所有图片计算向量，再按向量 ID 去重并合并路径，允许 label 重名。
+`add` 命令用于将图片添加到指定表。支持 jpg, jpeg, png, bmp, webp 等格式。文件夹会递归扫描，默认 `--dedup-mode fast` 在读取图片和计算向量前，按文件名 stem 查询已有 label 并跳过。`--dedup-mode strict` 对所有图片计算向量，再按向量 ID 去重并合并路径，允许 label 重名。
 
 ```shell
-# 添加单个文件或文件夹到默认数据库
+# 添加单个文件或文件夹到默认表
 isearch add ./images/photo1.jpg ./pictures/
 
 # 对所有图片计算向量，按向量 ID 合并路径
@@ -467,13 +467,13 @@ isearch add --dedup-mode strict ./images/
 # 对已有向量 ID，使用本次文件名更新 label（默认保留原 label）
 isearch add --dedup-mode strict --update-label ./images/
 
-# 指定数据库和绑定
+# 指定表和绑定
 isearch add -d my_gallery ./photos/ -B ./isearch.sock
 ```
 
 fast 模式只检查所选表当前的 label，不检查所有已存路径的文件名；队列中重复的 label 也会在向量化前过滤。跳过的图片不会合并路径或更新 label；同名不同图、原文件被替换、需要合并新路径时请使用 strict。`--update-label` 只作用于实际进入向量处理的图片。两种模式最终都按向量 ID 合并，输出数量为接受入队的图片数，不是成功写入的记录数。更新后需重启服务，让客户端和服务端都支持 label 检查。
 
-`add` 命令通过 TinyCLIP 提取图片特征（按模型为 512 或 1024 维），并存储在本地 LanceDB 表中。小库使用精确 cosine 搜索，达到 10,000 条时自动创建 IVF-HNSW 索引，每 20 次数据修改执行存储和索引优化。
+`add` 命令通过 TinyCLIP 提取图片特征（按模型为 512 或 1024 维），并存储在本地 LanceDB 表中。小表使用精确 cosine 搜索，达到 10,000 条时自动创建 IVF-HNSW 索引，每 20 次数据修改执行存储和索引优化。
 
 ### 3. 搜索图片
 
@@ -516,32 +516,32 @@ b681d3e48ac00c09	img1	92.3%	['/path/to/img1.jpg']
 1dff079456ec80b0	img2	85.1%	['/path/to/img2.png']
 ```
 
-### 4. 数据库管理
+### 4. 表管理
 
-#### 列出所有数据库
+#### 列出所有表
 
 ```shell
-isearch db -l
+isearch table -l
 ```
 
 输出：
 ```
-Available databases:
+Available tables:
 * default (loaded)
 * gallery
-* test_db
+* test_table
 ```
 
-#### 查看数据库信息
+#### 查看表信息
 
 ```shell
-isearch db -i my_db
+isearch table -i my_table
 ```
 
 输出示例：
 ```
-Database "my_db"
- - Base: /home/seamile/.isearch
+Table "my_table"
+ - DbPath: /home/seamile/.isearch
  - Count: 141610
  - Size: 313.9 MB
 ```
@@ -549,8 +549,8 @@ Database "my_db"
 #### 删除指定数据
 
 ```shell
-isearch db my_db --delete img1 img2
-isearch db my_db --delete-id b681d3e48ac00c09
+isearch table my_table --delete img1 img2
+isearch table my_table --delete-id b681d3e48ac00c09
 ```
 
 两种删除方式都会完整列出匹配记录的 ID、label 和 paths，确认后删除。按 label 删除时包含所有同名记录。
@@ -558,27 +558,27 @@ isearch db my_db --delete-id b681d3e48ac00c09
 #### 修复路径
 
 ```shell
-isearch db --prune          # 仅处理 default 表
-isearch db --prune my_db
+isearch table --prune          # 仅处理 default 表
+isearch table --prune my_table
 ```
 
 prune 移除失效路径及同 ID 内的重复路径。跨 ID 共享的路径通过与 add 相同的预处理重新计算向量，再关联到匹配的 ID，必要时新建记录。其他路径和 paths 为空的记录保留；读取或推理失败时保留相关关联。路径属于服务端文件系统，运行前请挂载相关磁盘。
 
-#### 清空数据库
+#### 清空表
 
 ```shell
 # 确认后清空
-isearch db --clear my_db
+isearch table --clear my_table
 ```
 
-#### 删除数据库
+#### 删除表
 
 ```shell
 # 确认后删除
-isearch db --drop my_db
+isearch table --drop my_table
 ```
 
-**⚠️ 警告**：所有删除操作均不可逆，`--clear` 会删除数据库中所有数据，`--drop` 仅删除所选表。
+**⚠️ 警告**：所有删除操作均不可逆，`--clear` 会删除所选表中所有记录，`--drop` 仅删除所选表。
 
 ### 5. 比较两张图片
 
@@ -599,7 +599,7 @@ ImgSearch 可作为 Python 模块导入到其他项目中。
 from imgsearch.client import Client
 
 # 创建客户端（默认连接本地服务）
-cli = Client(db_name='default', bind='~/.isearch/isearch.sock')
+cli = Client(table_name='default', bind='~/.isearch/isearch.sock')
 
 # 提交图片（返回接受处理的数量，不是新增记录数）
 image_paths = ['./img1.jpg', './img2.png', './folder/']
@@ -623,15 +623,15 @@ for row in results or []:
 similarity = cli.compare_images('./img1.jpg', './img2.jpg')
 print(f'相似度: {similarity}%')
 
-# 数据库操作
-dbs = cli.list_dbs()
-print(f'可用数据库: {dbs}')
+# 表操作
+tables = cli.list_tables()
+print(f'可用表: {tables}')
 
-info = cli.get_db_info()
-print(f'数据库信息: {info}')
+info = cli.get_table_info()
+print(f'表信息: {info}')
 
-# 清空数据库（返回 True/False）
-cleared = cli.clear_db()
+# 清空表（返回 True/False）
+cleared = cli.clear_table()
 print(f'清空成功: {cleared}')
 ```
 
@@ -667,7 +667,7 @@ isearch service start -m NEW_MODEL_KEY
 
 ## LanceDB storage / 存储迁移
 
-The work directory is one LanceDB database: `~/.isearch/default.lance`, `~/.isearch/albumd.lance`, etc. The CLI keeps `db` and `-d` to select a named image table. `ImageModel` in `imgsearch.models` defines `id: str`, `label: str`, `paths: list[str]` (default `[]`), and `vector: Vector(dim)` (float32). IDs are xxHash64 hex digests of the stored little-endian float32 vector bytes. `Clip.embed_images()`, `embed_image()`, and `embed_text()` return NumPy vectors; search RPC returns plain `id/label/paths/score` dictionaries without vectors.
+The work directory is one LanceDB database: `~/.isearch/default.lance`, `~/.isearch/albumd.lance`, etc. Use `isearch table` to manage named image tables and `-d` to select a table for add/search operations. `ImageModel` in `imgsearch.models` defines `id: str`, `label: str`, `paths: list[str]` (default `[]`), and `vector: Vector(dim)` (float32). IDs are xxHash64 hex digests of the stored little-endian float32 vector bytes. `Clip.embed_images()`, `embed_image()`, and `embed_text()` return NumPy vectors; search RPC returns plain `id/label/paths/score` dictionaries without vectors.
 
 导入默认先按 label 跳过（`--dedup-mode fast`），strict 模式不按 label 跳过。实际新增时按 ID 合并 paths，不检查旧路径、不从其他 ID 转移路径。默认保留原 label，`--update-label` 才会更新它。向量按字节判同，不是文件哈希或相似图去重；设备、模型和推理批次造成的浮点差异可能产生不同 ID。同一表请继续使用相同模型。
 

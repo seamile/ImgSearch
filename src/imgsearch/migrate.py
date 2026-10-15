@@ -58,15 +58,15 @@ def _legacy_rows(source: Path, dim: int):
     return dim, batches()
 
 
-def migrate(source: Path, destination: Path, dim: int = 512, *, table_name: str = 'default') -> int:
+def migrate(source: Path, db_path: Path, dim: int = 512, *, table_name: str = 'default') -> int:
     """Publish a validated new table; never modify the source or replace a table."""
-    source, destination = Path(source).resolve(), Path(destination).resolve()
-    target = VectorDB.table_path(table_name, destination)
-    if target.exists() or source == destination or source in destination.parents:
+    source, db_path = Path(source).resolve(), Path(db_path).resolve()
+    target = VectorDB.table_path(table_name, db_path)
+    if target.exists() or source == db_path or source in db_path.parents:
         raise ValueError('Destination must be outside the source with a new table name')
     dim, batches = _legacy_rows(source, dim)
-    destination.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix='.isearch-migrate-', dir=destination) as temporary:
+    db_path.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix='.isearch-migrate-', dir=db_path) as temporary:
         db = VectorDB(table_name, Path(temporary), dim)
         expected = set()
         for batch in batches:
@@ -97,12 +97,12 @@ def main() -> None:
     """Parse migration arguments and report the number of migrated image records."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path, help='Trusted legacy directory; stop the service first')
-    parser.add_argument('destination', type=Path, help='LanceDB root directory')
-    parser.add_argument('--table', dest='table_name', default='default', help='New destination table name')
+    parser.add_argument('db_path', type=Path, help='LanceDB root directory')
+    parser.add_argument('--table', dest='table_name', default='default', help='New table name')
     parser.add_argument('--dim', type=int, default=512, help='HNSW vector dimension; inferred for LanceDB')
     args = parser.parse_args()
-    count = migrate(args.source, args.destination, args.dim, table_name=args.table_name)
-    print(f'Migrated {count} unique records to {args.destination / (args.table_name + ".lance")}; source preserved.')
+    count = migrate(args.source, args.db_path, args.dim, table_name=args.table_name)
+    print(f'Migrated {count} unique records to {args.db_path / (args.table_name + ".lance")}; source preserved.')
 
 
 if __name__ == '__main__':

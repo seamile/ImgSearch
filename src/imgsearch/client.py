@@ -32,12 +32,12 @@ class Client:
     ImgSearch client for interacting with the imgsearch service.
 
     This client provides a command-line interface to the imgsearch service,
-    supporting image search, database management, and service control operations.
+    supporting image search, table management, and service control operations.
     """
 
-    def __init__(self, db_name: str = cfg.DB_NAME, bind: str = cfg.UNIX_SOCKET) -> None:
+    def __init__(self, table_name: str = cfg.TABLE_NAME, bind: str = cfg.UNIX_SOCKET) -> None:
         """Initialize the imgsearch client."""
-        self.db_name = db_name
+        self.table_name = table_name
         self.bind = bind
 
     @property
@@ -72,18 +72,18 @@ class Client:
         if dedup_mode == 'fast':
             try:
                 path_labels = [(path, Path(path).stem) for path in paths]
-                labels = set(self.service.handle_existing_labels([label for _, label in path_labels], self.db_name))  # type: ignore
+                labels = set(self.service.handle_existing_labels([label for _, label in path_labels], self.table_name))  # type: ignore
             except Exception as e:
                 ut.print_err(f'Failed to check existing labels: {e}')
                 return 0
             pending = [path for path, label in path_labels if label not in labels]
             if skipped := len(paths) - len(pending):
-                ut.print_inf(f'Skipped {skipped} images with existing labels in "{self.db_name}"')
+                ut.print_inf(f'Skipped {skipped} images with existing labels in "{self.table_name}"')
             paths = pending
         if not paths:
             return 0
 
-        ut.print_inf(f'Preparing {len(paths)} images for "{self.db_name}"...')
+        ut.print_inf(f'Preparing {len(paths)} images for "{self.table_name}"...')
         images = {}
         for path in paths:
             try:
@@ -94,12 +94,12 @@ class Client:
         if not images:
             return 0
         try:
-            ut.print_inf(f'Submitting {len(images)} images to "{self.db_name}"...')
+            ut.print_inf(f'Submitting {len(images)} images to "{self.table_name}"...')
             accepted = cast(
                 int,
                 self.service.handle_add_images(
                     images,
-                    self.db_name,
+                    self.table_name,
                     update_label=update_label,
                     dedup_mode=dedup_mode,
                 ),
@@ -109,7 +109,7 @@ class Client:
                     f'Server accepted {accepted}/{len(images)} images; {len(images) - accepted} were not queued'
                 )
             else:
-                ut.print_inf(f'Queued {accepted} images in "{self.db_name}"')
+                ut.print_inf(f'Queued {accepted} images in "{self.table_name}"')
             return accepted
         except Exception as e:
             ut.print_err(f'Failed to submit images: {e}')
@@ -119,7 +119,7 @@ class Client:
         """Skip stored labels in fast mode, or embed all images in strict mode; return accepted count."""
         if dedup_mode not in {'fast', 'strict'}:
             raise ValueError('dedup_mode must be fast or strict')
-        ut.print_inf(f'Scanning for images to add to "{self.db_name}" (dedup={dedup_mode})...')
+        ut.print_inf(f'Scanning for images to add to "{self.table_name}" (dedup={dedup_mode})...')
         futures, batch = [], []
         found = 0
         with ThreadPoolExecutor(max_workers=max(ut.cpu_count(), 2)) as pool:
@@ -157,64 +157,64 @@ class Client:
             raise TypeError(f'Invalid query type: {type(target)}')
 
         try:
-            return self.service.handle_search(query, k=num, similarity=similarity, db_name=self.db_name)
+            return self.service.handle_search(query, k=num, similarity=similarity, table_name=self.table_name)
         except Exception as e:
             ut.print_err(f'Failed to search: {e} ({e.__class__.__name__})')
             return None
 
-    def list_dbs(self) -> dict[str, bool]:
-        """Handle database list request."""
+    def list_tables(self) -> dict[str, bool]:
+        """Handle table list request."""
         try:
-            return self.service.handle_list_dbs()  # type: ignore
+            return self.service.handle_list_tables()  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return {}
 
-    def unload_dbs(self, *names: str) -> int:
-        """Handle database unload request."""
+    def unload_tables(self, *names: str) -> int:
+        """Handle table unload request."""
         try:
-            return self.service.handle_unload_dbs(*names)  # type: ignore
+            return self.service.handle_unload_tables(*names)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return 0
 
-    def get_db_info(self) -> dict | None:
-        """Handle database info request."""
+    def get_table_info(self) -> dict | None:
+        """Handle table info request."""
         try:
-            return self.service.handle_get_db_info(self.db_name)
+            return self.service.handle_get_table_info(self.table_name)
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return None
 
     def get_images(self, keys: list[str], *, by_id: bool = False) -> list[ImageInfo]:
         """Fetch image metadata by label or ID from the service."""
-        return cast(list[ImageInfo], self.service.handle_get_images(keys, self.db_name, by_id=by_id))
+        return cast(list[ImageInfo], self.service.handle_get_images(keys, self.table_name, by_id=by_id))
 
-    def prune_db(self) -> dict[str, int]:
+    def prune_table(self) -> dict[str, int]:
         """Prune stale or conflicting image paths and return cleanup statistics."""
-        ut.print_inf(f'Pruning database "{self.db_name or cfg.DB_NAME}"; checking paths and repairing conflicts...')
-        return cast(dict[str, int], self.service.handle_prune_db(self.db_name or cfg.DB_NAME))
+        ut.print_inf(f'Pruning table "{self.table_name or cfg.TABLE_NAME}"; checking paths and repairing conflicts...')
+        return cast(dict[str, int], self.service.handle_prune_table(self.table_name or cfg.TABLE_NAME))
 
     def delete_images(self, keys: list[str], *, by_id: bool = False) -> bool:
         """Handle image deletion request."""
         try:
-            return self.service.handle_delete_images(keys, self.db_name, by_id=by_id)  # type: ignore
+            return self.service.handle_delete_images(keys, self.table_name, by_id=by_id)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
 
-    def clear_db(self) -> bool:
-        """Handle database clear request."""
+    def clear_table(self) -> bool:
+        """Handle table clear request."""
         try:
-            return self.service.handle_clear_db(self.db_name)  # type: ignore
+            return self.service.handle_clear_table(self.table_name)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
 
-    def drop_db(self) -> bool:
-        """Handle database drop request."""
+    def drop_table(self) -> bool:
+        """Handle table drop request."""
         try:
-            return self.service.handle_drop_db(self.db_name)  # type: ignore
+            return self.service.handle_drop_table(self.table_name)  # type: ignore
         except Exception as e:
             ut.print_err(f'{e.__class__.__name__}: {e}')
             return False
@@ -237,7 +237,7 @@ class Client:
 
 def handle_service_command(  # ruff: ignore[complex-structure]
     service_cmd: str,
-    base_dir: Path = cfg.BASE_DIR,
+    db_path: Path = cfg.DB_PATH,
     model_key: str = cfg.DEFAULT_MODEL_KEY,
     bind: str = cfg.UNIX_SOCKET,
     log_level: str = 'info',
@@ -245,7 +245,7 @@ def handle_service_command(  # ruff: ignore[complex-structure]
     """Handle service management commands."""
     match service_cmd:
         case 'start' | 'stop' | 'status':
-            server = Server(base_dir, model_key, bind, log_level)
+            server = Server(db_path, model_key, bind, log_level)
             if service_cmd == 'start':
                 try:
                     server.run()
@@ -267,7 +267,7 @@ def handle_service_command(  # ruff: ignore[complex-structure]
                     ut.print_inf('iSearch service is running', marked=True)
                     ut.print_inf(f' - {ut.bold("PID")}  : {status["PID"]}')
                     ut.print_inf(f' - {ut.bold("MEM")}  : {status["Memory"] / 1024 / 1024:.1f} MB')
-                    ut.print_inf(f' - {ut.bold("Base")} : {status["Base"]}')
+                    ut.print_inf(f' - {ut.bold("DB path")} : {status["db_path"]}')
                     ut.print_inf(f' - {ut.bold("Model")}: {status["Model"]}')
                 except NotRunningError:
                     ut.print_err('iSearch service is not running')
@@ -281,7 +281,7 @@ def handle_service_command(  # ruff: ignore[complex-structure]
                 msg = ut.bold(f'Are you sure to {service_cmd} isearch service? [y/N]: ')
                 if input(msg).lower() != 'y':
                     return
-                elif service_cmd == 'setup' and setup_service(base_dir, model_key, bind, log_level):
+                elif service_cmd == 'setup' and setup_service(db_path, model_key, bind, log_level):
                     ut.print_inf(f'Service {service_cmd} completed successfully.')
                 elif service_cmd == 'remove' and remove_service():
                     ut.print_inf(f'Service {service_cmd} completed successfully.')
@@ -321,8 +321,8 @@ def create_parser() -> ArgumentParser:
         metavar='ADDR',
         help='Server bind address (UDS path or ip:port)',
     )
-    arg_db = ArgumentParser(add_help=False)
-    arg_db.add_argument('-d', dest='db_name', default=cfg.DB_NAME, help='Image table name')
+    arg_table = ArgumentParser(add_help=False)
+    arg_table.add_argument('-d', dest='table_name', default=cfg.TABLE_NAME, help='Image table name')
 
     # Main parser
     parser = ArgumentParser(prog='isearch', description=ut.bold('Lightweight Image Search Engine'))
@@ -333,7 +333,7 @@ def create_parser() -> ArgumentParser:
     # Search image subcommand
     cmd_search = subcmd.add_parser(
         'search',
-        parents=[arg_bind, arg_db],
+        parents=[arg_bind, arg_table],
         help=f'Search images {ut.bold("(default)")}',
         formatter_class=DefaultFmt,
     )
@@ -350,11 +350,11 @@ def create_parser() -> ArgumentParser:
         formatter_class=DefaultFmt,
     )
     cmd_service.add_argument(
-        '-b',
-        dest='base_dir',
+        '-d',
+        dest='db_path',
         type=Path,
-        default=cfg.BASE_DIR,
-        help='Database base directory path',
+        default=cfg.DB_PATH,
+        help='LanceDB root directory path',
     )
     cmd_service.add_argument(
         '-m',
@@ -382,8 +382,8 @@ def create_parser() -> ArgumentParser:
     # Add images subcommand
     cmd_add = subcmd.add_parser(
         'add',
-        parents=[arg_bind, arg_db],
-        help='Add images to database',
+        parents=[arg_bind, arg_table],
+        help='Add images to table',
         formatter_class=DefaultFmt,
     )
     cmd_add.add_argument(
@@ -395,20 +395,24 @@ def create_parser() -> ArgumentParser:
         default='fast',
         help='fast: skip existing labels; strict: embed every image and merge by vector ID',
     )
-    cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to DB (file or directory path)')
+    cmd_add.add_argument('paths', nargs='+', metavar='PATH', help='Add images to table (file or directory path)')
 
-    # Database management subcommand
-    cmd_db = subcmd.add_parser('db', parents=[arg_bind], help='Manage named image tables in the database root')
-    cmd_db.add_argument('db_name', nargs='?', metavar='DB_NAME', help='Image table name')
-    db_group = cmd_db.add_mutually_exclusive_group(required=True)
-    db_group.add_argument('-l', '--list', action='store_true', help='List all available image tables')
-    db_group.add_argument('-i', '--info', action='store_true', help='Show selected table information')
-    db_group.add_argument('-u', '--unload', action='store_true', help='Unload all image tables from memory')
-    db_group.add_argument('--delete', nargs='+', metavar='LABEL', help='Preview and delete all images matching labels')
-    db_group.add_argument('--delete-id', nargs='+', metavar='ID', help='Preview and delete images by vector ID')
-    db_group.add_argument('--prune', action='store_true', help='Repair paths in the selected table (default: default)')
-    db_group.add_argument('--clear', action='store_true', help='Clear the selected image table')
-    db_group.add_argument('--drop', action='store_true', help='Drop the selected image table')
+    # Table management subcommand
+    cmd_table = subcmd.add_parser('table', parents=[arg_bind], help='Manage named image tables in the LanceDB root')
+    cmd_table.add_argument('table_name', nargs='?', metavar='TABLE_NAME', help='Image table name')
+    table_group = cmd_table.add_mutually_exclusive_group(required=True)
+    table_group.add_argument('-l', '--list', action='store_true', help='List all available image tables')
+    table_group.add_argument('-i', '--info', action='store_true', help='Show selected table information')
+    table_group.add_argument('-u', '--unload', action='store_true', help='Unload all image tables from memory')
+    table_group.add_argument(
+        '--delete', nargs='+', metavar='LABEL', help='Preview and delete all images matching labels'
+    )
+    table_group.add_argument('--delete-id', nargs='+', metavar='ID', help='Preview and delete images by vector ID')
+    table_group.add_argument(
+        '--prune', action='store_true', help='Repair paths in the selected table (default: default)'
+    )
+    table_group.add_argument('--clear', action='store_true', help='Clear the selected image table')
+    table_group.add_argument('--drop', action='store_true', help='Drop the selected image table')
 
     # Compare images subcommand
     cmd_cmp = subcmd.add_parser('cmp', parents=[arg_bind], help='Compare similarity of two images')
@@ -431,14 +435,14 @@ def main() -> None:  # ruff: ignore[complex-structure]
     if args.command == 'service':
         handle_service_command(
             args.action,
-            base_dir=args.base_dir,
+            db_path=args.db_path,
             model_key=args.model_key,
             bind=args.bind,
             log_level=args.log_level,
         )
 
     elif args.command == 'add':
-        client = Client(db_name=args.db_name, bind=args.bind)
+        client = Client(table_name=args.table_name, bind=args.bind)
         n_added = client.add_images(args.paths, update_label=args.update_label, dedup_mode=args.dedup_mode)
         ut.print_inf(f'Submitted {n_added} images for background processing; check the server log for completion')
 
@@ -447,40 +451,40 @@ def main() -> None:  # ruff: ignore[complex-structure]
         similarity = client.compare_images(args.path1, args.path2)
         ut.print_inf(f'Similarity between images: {similarity}%')
 
-    elif args.command == 'db':
-        client = Client(db_name=args.db_name, bind=args.bind)
+    elif args.command == 'table':
+        client = Client(table_name=args.table_name, bind=args.bind)
         if args.list:
-            if databases := client.list_dbs():
-                ut.print_inf('Databases:', marked=True)
-                for db_name, loaded in databases.items():
+            if tables := client.list_tables():
+                ut.print_inf('Tables:', marked=True)
+                for table_name, loaded in tables.items():
                     if loaded:
-                        ut.print_inf(f' - {ut.bold(db_name)} {ut.colorize("(loaded)", "gray")}')
+                        ut.print_inf(f' - {ut.bold(table_name)} {ut.colorize("(loaded)", "gray")}')
                     else:
-                        ut.print_inf(f' - {db_name}')
+                        ut.print_inf(f' - {table_name}')
             else:
-                ut.print_warn('No databases found.')
+                ut.print_warn('No tables found.')
 
         elif args.info:
-            if info := client.get_db_info():
-                ut.print_inf(f'Database "{args.db_name}"', marked=True)
+            if info := client.get_table_info():
+                ut.print_inf(f'Table "{args.table_name}"', marked=True)
                 for key, value in sorted(info.items()):
                     if key == 'size':
                         value = f'{value / 1024 / 1024:.1f} MB'
                     ut.print_inf(f' - {ut.bold(key.title().replace("_", ""))}: {value}')
-            elif args.db_name is None:
-                ut.print_err('Database name is required.')
+            elif args.table_name is None:
+                ut.print_err('Table name is required.')
             else:
-                ut.print_err(f"Not found DB: '{args.db_name}'")
+                ut.print_err(f"Table not found: '{args.table_name}'")
 
         elif args.unload:
-            if count := client.unload_dbs():
-                ut.print_inf(f'Unloaded {count} databases.')
+            if count := client.unload_tables():
+                ut.print_inf(f'Unloaded {count} tables.')
             else:
-                ut.print_inf('Not loaded any databases.')
+                ut.print_inf('Not loaded any tables.')
 
         elif args.prune:
             try:
-                stats = client.prune_db()
+                stats = client.prune_table()
                 for name, count in stats.items():
                     print(f'{name}: {count}')
                 if stats['errors']:
@@ -490,7 +494,7 @@ def main() -> None:  # ruff: ignore[complex-structure]
                 sys.exit(1)
 
         elif args.delete or args.delete_id:
-            if args.db_name is None:
+            if args.table_name is None:
                 ut.print_err('Table name is required.')
                 sys.exit(1)
             try:
@@ -500,7 +504,7 @@ def main() -> None:  # ruff: ignore[complex-structure]
                 sys.exit(1)
             for row in rows:
                 print(f'{row["id"]}\t{row["label"]}\t{row["paths"]}')
-            notice = f'Delete these {len(rows)} image records from "{args.db_name}"? [y/N]: '
+            notice = f'Delete these {len(rows)} image records from "{args.table_name}"? [y/N]: '
             if input(notice).lower() == 'y':
                 if client.delete_images([row['id'] for row in rows], by_id=True):
                     ut.print_inf(f'Successfully deleted {len(rows)} image records.')
@@ -509,31 +513,31 @@ def main() -> None:  # ruff: ignore[complex-structure]
                     sys.exit(1)
 
         elif args.clear:
-            if args.db_name is None:
-                ut.print_err('Database name is required.')
+            if args.table_name is None:
+                ut.print_err('Table name is required.')
                 sys.exit(1)
 
-            notice = ut.colorize(f'Are you sure to clear the DB "{args.db_name}"? [y/N]: ', 'yellow', True)
+            notice = ut.colorize(f'Are you sure to clear the table "{args.table_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
-                if client.clear_db():
-                    ut.print_inf(f'Database "{ut.colorize(args.db_name, "red")}" has been cleared.')
+                if client.clear_table():
+                    ut.print_inf(f'Table "{ut.colorize(args.table_name, "red")}" has been cleared.')
                 else:
-                    ut.print_err(f'Failed to clear the DB "{args.db_name}".')
+                    ut.print_err(f'Failed to clear the table "{args.table_name}".')
 
         elif args.drop:
-            if args.db_name is None:
-                ut.print_err('Database name is required.')
+            if args.table_name is None:
+                ut.print_err('Table name is required.')
                 sys.exit(1)
 
-            notice = ut.colorize(f'Are you sure to drop the DB "{args.db_name}"? [y/N]: ', 'yellow', True)
+            notice = ut.colorize(f'Are you sure to drop the table "{args.table_name}"? [y/N]: ', 'yellow', True)
             if input(notice).lower() == 'y':
-                if client.drop_db():
-                    ut.print_inf(f'Database "{ut.colorize(args.db_name, "red")}" has been dropped.')
+                if client.drop_table():
+                    ut.print_inf(f'Table "{ut.colorize(args.table_name, "red")}" has been dropped.')
                 else:
-                    ut.print_err(f'Failed to drop the DB "{args.db_name}".')
+                    ut.print_err(f'Failed to drop the table "{args.table_name}".')
 
     elif args.command == 'search':
-        client = Client(db_name=args.db_name, bind=args.bind)
+        client = Client(table_name=args.table_name, bind=args.bind)
         # Validate similarity parameter
         if not 0.0 <= args.sim_thr <= 100.0:
             ut.print_err('Error: sim_thr must be between 0 and 100')
