@@ -637,12 +637,12 @@ class Server:
             self.daemon.requestLoop(lambda: not self._shutdown.is_set())
         except ImportError as e:
             self.logger.error(f'Missing optional dependencies: {e}')
-            self.logger.error("Run `pip install 'imgsearch[all]'` for a full install.")
+            self.logger.error("Run `pip install 'imgsearch[server]'` for a full install.")
         except Exception as e:
             self.logger.error(f'Server failed to run: {e}')
         finally:
             self.cleanup()
-            self.logger.info('iSearch service stopped')
+            self.logger.warning('iSearch service stopped')
 
     def handle_signal(self, signum, _):
         """Handle various signals."""

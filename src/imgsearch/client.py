@@ -546,9 +546,12 @@ def main() -> None:  # ruff: ignore[complex-structure]
         ut.print_msg(f'Searching {args.target}...')
         results = client.search(args.target, args.num, args.sim_thr)
         if results:
-            ut.print_inf(f'Found {len(results)} images similar to {args.target} (similarity ≥ {args.sim_thr}%):', True)
+            ut.print_inf(f'Found {len(results)} images similar to {Path(args.target).name}:', True)
+            label_width = max(len(row['label']) for row in results)
             for row in results:
-                print(f'{row["id"]}\t{row["label"]}\t{row["score"]}%\t{row["paths"]}')
+                print(f'  {row["label"]:<{label_width}}    {row["score"]}%')
+                for path in row['paths']:
+                    print(ut.colorize(f'  - {path}', 'gray', False))
 
             if args.open_res:
                 paths = []
